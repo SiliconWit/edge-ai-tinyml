@@ -40,10 +40,10 @@ Train the model on a powerful machine (your laptop, a cloud instance, Edge Impul
 | Benefit | Explanation |
 |---------|-------------|
 | **Low latency** | Inference takes milliseconds on-device. No network round-trip. |
-| **No connectivity needed** | The model is baked into firmware. Works offline. |
+| **Connectivity optional** | The model is baked into firmware. Core inference works offline, though production systems benefit from cloud connectivity for model updates and escalation (Lesson 9). |
 | **Privacy** | Raw sensor data never leaves the device. Only results are transmitted. |
 | **Low power** | A Cortex-M4 running inference at 1 Hz draws single-digit milliamps. |
-| **Low cost** | A $2 MCU replaces a $50 SBC or a cloud API subscription. |
+| **Low cost** | A 2 USD MCU replaces a 50 USD SBC or a cloud API subscription. |
 
 ## Hardware Constraints
 
@@ -258,7 +258,6 @@ const unsigned int sine_model_int8_tflite_len = 2480;
     - sine_model_data.c
   - components/
     - tfmicro/
-      - (TFLite Micro source files)
 </FileTree>
 
 #### Adding TFLite Micro to ESP-IDF

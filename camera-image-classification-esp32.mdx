@@ -1032,7 +1032,7 @@ Notes:
     - idf_component.yml
     - main.c
     - person_detect_model.h
-    - mobilenet_model.h (optional, for object classification)
+    - mobilenet_model.h
 </FileTree>
 
 ## Course Wrap-Up and Next Steps
@@ -1040,7 +1040,7 @@ Notes:
 <InArticleAd />
 
 
-Over eight lessons you progressed from deploying a pre-trained sine wave model to building a real-time image classifier on an ESP32-CAM. Here is what you covered:
+Over nine lessons you progressed from deploying a pre-trained sine wave model to building a real-time image classifier on an ESP32-CAM and then connecting edge inference to cloud infrastructure. Here is what you covered:
 
 | Lesson | Skill Gained | Model Type | Platform |
 |--------|-------------|------------|----------|
@@ -1052,8 +1052,11 @@ Over eight lessons you progressed from deploying a pre-trained sine wave model t
 | 6 | IMU data pipeline, dual-platform | Gesture dense NN | Pico, STM32 |
 | 7 | Anomaly detection, autoencoders | Vibration autoencoder | ESP32 |
 | 8 | Vision ML, PSRAM management | Person/object CNN | ESP32-CAM |
+| 9 | Edge-cloud hybrid, OTA models | Tiered inference system | ESP32 + Cloud |
 
 ### Where to Go From Here
+
+**Lesson 9: Edge-Cloud Hybrid Architectures.** The next lesson ties edge inference to cloud infrastructure. You will build a system where the ESP32 runs local classification, escalates uncertain results to the cloud for a larger model, and receives updated models via OTA. If you completed the IoT Systems course, you already have the MQTT, dashboard, and REST API skills that Lesson 9 builds on.
 
 **Combine modalities.** A device that runs both a wake word detector and a camera classifier can respond to voice commands with visual confirmation. The ESP32's dual cores make this feasible: one core handles audio, the other handles vision.
 
@@ -1083,7 +1086,7 @@ Over eight lessons you progressed from deploying a pre-trained sine wave model t
 <InArticleAd />
 
 
-You deployed image classification models on the most constrained vision platform in this course: the ESP32-CAM with its OV2640 camera and 4 MB PSRAM. A custom 4-layer CNN for person detection achieved ~89% accuracy at 5 FPS with a 30 KB quantized model. A MobileNetV1 0.25 with transfer learning handled 5-class object classification at ~86% accuracy and 1.2 FPS with a 250 KB model. PSRAM management was the central engineering challenge: the camera frame buffer and tensor arena both reside in PSRAM to keep internal SRAM free for the interpreter and task stacks. Preprocessing was straightforward (grayscale pixel shift from uint8 to int8), and the OV2640's native 96x96 output mode eliminated the need for software resizing. This capstone lesson demonstrated that useful computer vision is possible on a microcontroller that costs a few dollars, runs on milliwatts, and requires no cloud connectivity.
+You deployed image classification models on the most constrained vision platform in this course: the ESP32-CAM with its OV2640 camera and 4 MB PSRAM. A custom 4-layer CNN for person detection achieved ~89% accuracy at 5 FPS with a 30 KB quantized model. A MobileNetV1 0.25 with transfer learning handled 5-class object classification at ~86% accuracy and 1.2 FPS with a 250 KB model. PSRAM management was the central engineering challenge: the camera frame buffer and tensor arena both reside in PSRAM to keep internal SRAM free for the interpreter and task stacks. Preprocessing was straightforward (grayscale pixel shift from uint8 to int8), and the OV2640's native 96x96 output mode eliminated the need for software resizing. This lesson demonstrated that useful computer vision is possible on a microcontroller that costs a few dollars and runs on milliwatts. Lesson 9 takes this further by connecting edge inference to cloud infrastructure for tiered classification, model retraining, and OTA updates.
 
 <EdgeAiTinymlComments />
 

@@ -786,7 +786,7 @@ You should see the MSE spike immediately and the LED turn on within 1 to 2 secon
 |--------|-------------|----------------------|
 | Detection latency | 0.5 s (one window) | 1 to 5 s (network + server processing) |
 | Bandwidth | 0 bytes (inference local) | 1200 bytes/sec (raw data streaming) |
-| Availability | Works offline | Requires network connection |
+| Availability | Core inference works offline | Requires network connection |
 | Power | ~80 mA (MCU only) | ~160 mA (MCU + Wi-Fi radio) |
 | Model update | Requires OTA firmware update | Update model on server, instant |
 | Compute cost | Free (on-device) | Server compute charges |
@@ -795,6 +795,16 @@ You should see the MSE spike immediately and the LED turn on within 1 to 2 secon
 The edge approach is clearly better for latency-critical alerts (a bearing failing in real time cannot wait for a network round trip) and for deployments in connectivity-poor environments (factory floors with RF interference, remote pump stations). The cloud approach wins when you need to aggregate data from hundreds of sensors, run complex models that do not fit on an MCU, or continuously update models without reflashing firmware.
 
 A hybrid architecture is often the best practical choice: run a simple anomaly detector on the edge for immediate alerting, and periodically upload summarized feature data (not raw samples) to the cloud for long-term trend analysis and model retraining.
+
+### When Hybrid Beats Pure Edge
+
+Pure edge inference works well for binary decisions (anomaly or normal) with a fixed model. But production systems face challenges that edge alone cannot solve:
+
+- **Model drift.** A motor's vibration signature changes as bearings wear in. The threshold you set on day one may trigger false positives by month three. A cloud pipeline that collects edge feature summaries can retrain and push updated models via OTA.
+- **Fleet-wide patterns.** One sensor sees one machine. A cloud aggregation layer can detect that three machines on the same production line all shifted their vibration profiles simultaneously, suggesting a shared root cause (power quality, floor vibration, ambient temperature) that no single edge node could identify.
+- **Uncertain classifications.** When the MSE falls in a gray zone (close to the threshold but not clearly above or below), the edge node can escalate by uploading the raw feature window to the cloud for a more powerful model to evaluate. This tiered inference pattern keeps bandwidth low while improving accuracy for ambiguous cases.
+
+Lesson 9 covers these hybrid patterns in depth, including a complete implementation of tiered inference with cloud-assisted retraining.
 
 ## Integration with IoT Stack (MQTT Alert on Anomaly)
 
@@ -892,7 +902,7 @@ static void check_and_publish_anomaly(float mse, float ema, bool is_anomaly)
     - anomaly_model.h
     - norm_constants.h
   - components/
-    - esp-tflite-micro/ (managed)
+    - esp-tflite-micro/
 </FileTree>
 
 ## Exercises

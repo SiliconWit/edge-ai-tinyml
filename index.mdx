@@ -1,6 +1,6 @@
 ---
 title: "Edge AI / TinyML"
-description: "Deploy machine learning on microcontrollers. Eight lessons covering TinyML fundamentals, Edge Impulse workflows, TensorFlow Lite Micro deployment, model quantization, keyword spotting, gesture recognition, anomaly detection, and camera-based image classification on ESP32."
+description: "Deploy machine learning on microcontrollers. Nine lessons covering TinyML fundamentals, Edge Impulse workflows, TensorFlow Lite Micro deployment, model quantization, keyword spotting, gesture recognition, anomaly detection, camera-based image classification, and edge-cloud hybrid architectures."
 pubDate: 2026-03-11
 tags: ["tinyml", "edge-ai", "tensorflow-lite", "edge-impulse", "esp32", "stm32", "rpi-pico", "machine-learning", "microcontrollers"]
 excerpt: "Run machine learning inference on microcontrollers with kilobytes of RAM. Train models with Edge Impulse and TensorFlow, quantize them for constrained hardware, and deploy real applications: keyword spotting, gesture recognition, anomaly detection, and image classification."
@@ -11,19 +11,19 @@ import Copyright from '../../../../components/Copyright.astro';
 import TawkWidget from '../../../../components/TawkWidget.astro';
 import { Card, CardGrid, Badge, Steps } from '@astrojs/starlight/components';
 
-The IoT Systems course taught you to send sensor data to the cloud for processing, visualization, and alerting. But not every application can tolerate the latency, bandwidth cost, or privacy exposure of cloud round-trips. Edge AI puts the intelligence directly on the microcontroller. A sensor node that classifies vibration patterns locally, detects a wake word without an internet connection, or spots an anomaly in real time before uploading anything is a fundamentally different kind of embedded device. This course teaches you to build those devices. #TinyML #EdgeAI #EmbeddedML
+The IoT Systems course taught you to send sensor data to the cloud for processing, visualization, and alerting. But not every application can tolerate the latency, bandwidth cost, or privacy exposure of cloud round-trips for every inference. Edge AI puts intelligence directly on the microcontroller. A sensor node that classifies vibration patterns locally, detects a wake word in milliseconds, or spots an anomaly before uploading anything is a fundamentally different kind of embedded device. In practice, the best production systems combine edge inference with cloud intelligence: fast local decisions, cloud escalation for uncertain cases, and over-the-air model updates. This course teaches you to build both the edge and the hybrid. #TinyML #EdgeAI #EmbeddedML
 
 ## Why Edge AI on Microcontrollers?
 
-Cloud ML is powerful, but it requires connectivity, introduces latency, consumes bandwidth, and raises privacy concerns. TinyML solves these problems by running inference directly on the MCU.
+Cloud ML is powerful, but it requires connectivity, introduces latency, consumes bandwidth, and raises privacy concerns. TinyML addresses these problems by running inference directly on the MCU, while hybrid architectures (Lesson 9) combine the best of both.
 
 <CardGrid>
   <Card title="Real-Time Response" icon="star">
     Inference on-device takes milliseconds, not the hundreds of milliseconds (or seconds) required for a cloud round-trip. Wake word detection, gesture recognition, and anomaly alerts happen instantly. Lesson 5 builds a keyword spotter that responds in under 200 ms on an ESP32.
   </Card>
 
-  <Card title="No Connectivity Required" icon="setting">
-    An MCU running a TinyML model works in basements, remote fields, aircraft, and anywhere else without reliable internet. The model is baked into the firmware. No Wi-Fi, no cellular, no dependency on external servers.
+  <Card title="Works With Limited Connectivity" icon="setting">
+    An MCU running a TinyML model can make decisions locally in basements, remote fields, aircraft, and anywhere else with unreliable internet. The model is baked into the firmware, so core inference works offline. For production systems, periodic connectivity enables model updates, cloud escalation of uncertain cases, and fleet-wide analytics (covered in Lesson 9).
   </Card>
 
   <Card title="Privacy by Design" icon="approve-check">
@@ -94,9 +94,14 @@ Each lesson follows a consistent cycle:
     **Build:** Vibration anomaly detector. **Parts:** ESP32, MPU6050 (reuse).
   </Card>
 
-  <Card title="Lesson 8: Camera Image Classification on ESP32" icon="rocket">
+  <Card title="Lesson 8: Camera Image Classification on ESP32" icon="document">
     [Camera Image Classification on ESP32](./camera-image-classification-esp32). Deploy a MobileNet-based image classifier on an ESP32-CAM. Capture images, run inference, and classify objects or detect people. Optimize the model to fit within ESP32's memory constraints.
     **Build:** Person/object detector on ESP32-CAM. **Parts:** ESP32-CAM module.
+  </Card>
+
+  <Card title="Lesson 9: Edge-Cloud Hybrid Architectures" icon="rocket">
+    [Edge-Cloud Hybrid Architectures](./edge-cloud-hybrid-architecture). Combine on-device inference with cloud intelligence. Build a system where the ESP32 handles clear cases locally, escalates uncertain classifications to a cloud server, and receives retrained models via OTA. Covers tiered inference, cloud retraining pipelines, and federated learning concepts.
+    **Build:** Hybrid inference system with OTA model updates. **Parts:** ESP32 (reuse), cloud server.
   </Card>
 </CardGrid>
 
@@ -117,12 +122,12 @@ Most components are reused from the embedded courses. A few new parts are needed
 
 ## Skill Progression
 
-| Skill | Lessons 1-2 | Lessons 3-4 | Lessons 5-6 | Lessons 7-8 |
+| Skill | Lessons 1-2 | Lessons 3-4 | Lessons 5-6 | Lessons 7-9 |
 |-------|------------|------------|------------|------------|
-| **ML Fundamentals** | TinyML overview, inference lifecycle | TFLite Micro API, cross-platform | Audio features, time-series | Autoencoders, CNNs |
-| **Data Pipeline** | Edge Impulse cloud workflow | TensorFlow local training | Speech Commands dataset, IMU capture | Vibration FFT, image preprocessing |
-| **Optimization** | Default quantization | int8 quantization, QAT | MFCC feature extraction | Model pruning, memory mapping |
-| **Deployment** | ESP32 only | ESP32 + STM32 | ESP32 + Pico + STM32 | ESP32-CAM, edge vs cloud |
+| **ML Fundamentals** | TinyML overview, inference lifecycle | TFLite Micro API, cross-platform | Audio features, time-series | Autoencoders, CNNs, federated learning |
+| **Data Pipeline** | Edge Impulse cloud workflow | TensorFlow local training | Speech Commands dataset, IMU capture | Vibration FFT, image preprocessing, cloud retraining |
+| **Optimization** | Default quantization | int8 quantization, QAT | MFCC feature extraction | Model pruning, memory mapping, OTA updates |
+| **Deployment** | ESP32 only | ESP32 + STM32 | ESP32 + Pico + STM32 | ESP32-CAM, edge-cloud hybrid |
 
 ## Prerequisites
 
