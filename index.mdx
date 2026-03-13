@@ -1,0 +1,162 @@
+---
+title: "Edge AI / TinyML"
+description: "Deploy machine learning on microcontrollers. Eight lessons covering TinyML fundamentals, Edge Impulse workflows, TensorFlow Lite Micro deployment, model quantization, keyword spotting, gesture recognition, anomaly detection, and camera-based image classification on ESP32."
+pubDate: 2026-03-11
+tags: ["tinyml", "edge-ai", "tensorflow-lite", "edge-impulse", "esp32", "stm32", "rpi-pico", "machine-learning", "microcontrollers"]
+excerpt: "Run machine learning inference on microcontrollers with kilobytes of RAM. Train models with Edge Impulse and TensorFlow, quantize them for constrained hardware, and deploy real applications: keyword spotting, gesture recognition, anomaly detection, and image classification."
+heroImage: "https://cdn.siliconwit.com/education/edge-ai-tinyml/edge-ai-tinyml-overview.png"
+---
+
+import Copyright from '../../../../components/Copyright.astro';
+import TawkWidget from '../../../../components/TawkWidget.astro';
+import { Card, CardGrid, Badge, Steps } from '@astrojs/starlight/components';
+
+The IoT Systems course taught you to send sensor data to the cloud for processing, visualization, and alerting. But not every application can tolerate the latency, bandwidth cost, or privacy exposure of cloud round-trips. Edge AI puts the intelligence directly on the microcontroller. A sensor node that classifies vibration patterns locally, detects a wake word without an internet connection, or spots an anomaly in real time before uploading anything is a fundamentally different kind of embedded device. This course teaches you to build those devices. #TinyML #EdgeAI #EmbeddedML
+
+## Why Edge AI on Microcontrollers?
+
+Cloud ML is powerful, but it requires connectivity, introduces latency, consumes bandwidth, and raises privacy concerns. TinyML solves these problems by running inference directly on the MCU.
+
+<CardGrid>
+  <Card title="Real-Time Response" icon="star">
+    Inference on-device takes milliseconds, not the hundreds of milliseconds (or seconds) required for a cloud round-trip. Wake word detection, gesture recognition, and anomaly alerts happen instantly. Lesson 5 builds a keyword spotter that responds in under 200 ms on an ESP32.
+  </Card>
+
+  <Card title="No Connectivity Required" icon="setting">
+    An MCU running a TinyML model works in basements, remote fields, aircraft, and anywhere else without reliable internet. The model is baked into the firmware. No Wi-Fi, no cellular, no dependency on external servers.
+  </Card>
+
+  <Card title="Privacy by Design" icon="approve-check">
+    Audio, images, and motion data never leave the device. The raw signal is processed on-chip and only the classification result (a label, a score, a flag) is transmitted. This is a hard requirement in medical, industrial, and consumer applications.
+  </Card>
+
+  <Card title="Microwatt Power Budgets" icon="warning">
+    A Cortex-M4 running inference at 1 Hz draws single-digit milliamps. Compare that to a Wi-Fi radio transmitting raw sensor data continuously. TinyML enables battery-powered deployments lasting months or years.
+  </Card>
+</CardGrid>
+
+## Course Structure
+
+Each lesson follows a consistent cycle:
+
+<Steps>
+1. **The ML Problem**
+   A concrete classification, detection, or anomaly task that benefits from on-device inference rather than cloud processing.
+
+2. **Data Collection and Labeling**
+   How to gather training data from real sensors, label it correctly, and split it into train/validation/test sets.
+
+3. **Model Training**
+   Train a neural network using TensorFlow, Edge Impulse, or scikit-learn. Understand the architecture choices that make a model small enough for an MCU.
+
+4. **Optimization and Deployment**
+   Quantize the model, convert it to TensorFlow Lite Micro format, embed it in firmware, and run inference on the target MCU.
+
+5. **Evaluation and Integration**
+   Measure accuracy, latency, and memory usage on real hardware. Integrate the inference result into application logic (alerts, actuators, display, MQTT publish).
+</Steps>
+
+## Lessons
+
+<CardGrid>
+  <Card title="Lesson 1: TinyML and Machine Learning on Microcontrollers" icon="star">
+    [TinyML and Machine Learning on Microcontrollers](./tinyml-machine-learning-microcontrollers). Understand the TinyML landscape, toolchains, and hardware constraints. Deploy a pre-trained sine wave model on an ESP32 to see the full workflow from TensorFlow to on-device inference.
+    **Build:** Sine wave predictor on ESP32. **Parts:** ESP32 (reuse).
+  </Card>
+
+  <Card title="Lesson 2: Edge Impulse Data Collection and Training" icon="document">
+    [Edge Impulse Data Collection and Training](./edge-impulse-data-collection-training). Collect accelerometer data from an MPU6050, upload it to Edge Impulse, train a motion classifier, and deploy the quantized model back to the ESP32 for real-time inference.
+    **Build:** Motion classifier via Edge Impulse. **Parts:** ESP32, MPU6050 (reuse or new).
+  </Card>
+
+  <Card title="Lesson 3: TensorFlow Lite Micro Model Deployment" icon="document">
+    [TensorFlow Lite Micro Model Deployment](./tensorflow-lite-micro-model-deployment). Train a gesture classifier in TensorFlow on your PC, convert it to TFLite Micro, and deploy it on ESP32 and STM32. Compare the TFLM interpreter API across platforms and measure inference time.
+    **Build:** Cross-platform gesture classifier. **Parts:** ESP32, STM32 (reuse).
+  </Card>
+
+  <Card title="Lesson 4: Model Quantization and Optimization for MCUs" icon="document">
+    [Model Quantization and Optimization for MCUs](./model-quantization-optimization-mcu). Take a float32 model and quantize it to int8. Compare accuracy, inference speed, and flash/RAM usage before and after quantization. Learn post-training quantization and quantization-aware training.
+    **Build:** Quantization comparison bench. **Parts:** ESP32 (reuse).
+  </Card>
+
+  <Card title="Lesson 5: Keyword Spotting and Voice Wake Word" icon="document">
+    [Keyword Spotting and Voice Wake Word](./keyword-spotting-voice-wake-word). Build a "Hey Device" wake word detector using an I2S MEMS microphone and an ESP32. Train on the Speech Commands dataset, deploy the model, and trigger actions on keyword detection.
+    **Build:** Wake word detector with I2S mic. **Parts:** ESP32, INMP441 I2S mic.
+  </Card>
+
+  <Card title="Lesson 6: Accelerometer Gesture Recognition" icon="document">
+    [Accelerometer Gesture Recognition](./accelerometer-gesture-recognition). Collect labeled gesture data (shake, tilt, tap, circle) from an accelerometer, train a classifier, and deploy it on RPi Pico and STM32. Integrate gesture output with LED feedback and MQTT publishing.
+    **Build:** Gesture classifier on Pico/STM32. **Parts:** RPi Pico W, STM32, MPU6050 (reuse).
+  </Card>
+
+  <Card title="Lesson 7: Anomaly Detection for Predictive Maintenance" icon="document">
+    [Anomaly Detection for Predictive Maintenance](./anomaly-detection-predictive-maintenance). Train an autoencoder on normal vibration data, deploy it on an ESP32, and detect mechanical anomalies in real time. Compare edge-only detection with cloud-based anomaly scoring.
+    **Build:** Vibration anomaly detector. **Parts:** ESP32, MPU6050 (reuse).
+  </Card>
+
+  <Card title="Lesson 8: Camera Image Classification on ESP32" icon="rocket">
+    [Camera Image Classification on ESP32](./camera-image-classification-esp32). Deploy a MobileNet-based image classifier on an ESP32-CAM. Capture images, run inference, and classify objects or detect people. Optimize the model to fit within ESP32's memory constraints.
+    **Build:** Person/object detector on ESP32-CAM. **Parts:** ESP32-CAM module.
+  </Card>
+</CardGrid>
+
+## Parts Kit
+
+Most components are reused from the embedded courses. A few new parts are needed.
+
+| Part | Quantity | First Used | Notes |
+|------|----------|------------|-------|
+| ESP32 dev board | 1 | Lesson 1 | Reuse from ESP32 course |
+| STM32 dev board | 1 | Lesson 3 | Reuse from STM32 course |
+| RPi Pico W | 1 | Lesson 6 | Reuse from RPi Pico course |
+| MPU6050 accelerometer module | 1 | Lesson 2 | I2C, 3.3V compatible |
+| INMP441 I2S MEMS microphone | 1 | Lesson 5 | For audio input |
+| ESP32-CAM module | 1 | Lesson 8 | OV2640 camera, onboard PSRAM |
+
+**Estimated cost for new parts: ~15 USD** (MPU6050 + INMP441 + ESP32-CAM)
+
+## Skill Progression
+
+| Skill | Lessons 1-2 | Lessons 3-4 | Lessons 5-6 | Lessons 7-8 |
+|-------|------------|------------|------------|------------|
+| **ML Fundamentals** | TinyML overview, inference lifecycle | TFLite Micro API, cross-platform | Audio features, time-series | Autoencoders, CNNs |
+| **Data Pipeline** | Edge Impulse cloud workflow | TensorFlow local training | Speech Commands dataset, IMU capture | Vibration FFT, image preprocessing |
+| **Optimization** | Default quantization | int8 quantization, QAT | MFCC feature extraction | Model pruning, memory mapping |
+| **Deployment** | ESP32 only | ESP32 + STM32 | ESP32 + Pico + STM32 | ESP32-CAM, edge vs cloud |
+
+## Prerequisites
+
+<Badge text="Embedded programming experience required" variant="caution" />
+
+**You should be comfortable with:**
+- C programming and at least one MCU platform (ESP32, STM32, or RPi Pico)
+- Basic Python (for TensorFlow and data processing scripts)
+- I2C sensor interfacing (covered in the embedded courses)
+- Linux command line
+
+**Helpful but not required:**
+- Machine learning concepts (we start from the basics)
+- The IoT Systems course (for cloud integration context)
+- TensorFlow or PyTorch experience
+
+## Getting Started
+
+<Steps>
+1. **Install Python 3.9+ and TensorFlow.** TensorFlow is used for model training on your PC. The TFLite Micro runtime is compiled into the MCU firmware separately.
+
+2. **Create a free Edge Impulse account.** Go to [edgeimpulse.com](https://edgeimpulse.com) and register. Edge Impulse provides a web-based pipeline for data collection, training, and deployment. The free tier supports everything in this course.
+
+3. **Ensure you have an ESP32 dev board.** Lesson 1 starts with the ESP32. If you completed the ESP32 course, you already have one.
+
+4. **Get an MPU6050 accelerometer module.** Lessons 2, 6, and 7 use this sensor for motion and vibration data. Available for under 3 USD from most electronics suppliers.
+
+5. **Start with Lesson 1.** The sine wave model walkthrough gives you the complete mental model of the TinyML deployment pipeline.
+</Steps>
+
+:::tip[You do not need a GPU]
+All model training in this course runs on a CPU in minutes. The models are intentionally small (kilobytes, not gigabytes) because they must fit on microcontrollers. Edge Impulse handles training in the cloud if you prefer not to install TensorFlow locally.
+:::
+
+<Copyright />
+
+<TawkWidget />

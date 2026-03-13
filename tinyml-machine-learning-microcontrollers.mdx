@@ -1,0 +1,539 @@
+---
+title: "TinyML and Machine Learning on Microcontrollers"
+description: "Understand the TinyML landscape, hardware constraints, and the full ML pipeline from TensorFlow training to on-device inference. Deploy a sine wave regression model on an ESP32 using TensorFlow Lite for Microcontrollers."
+contributors: "sam-macharia,lawrence-langat,john-kibe"
+pubDate: 2026-03-01
+tags: ["tinyml", "edge-ai", "tensorflow-lite", "esp32", "machine-learning", "microcontrollers", "tflite-micro"]
+excerpt: "Train a sine wave model in TensorFlow on your PC, quantize it to int8, convert the .tflite file to a C array, and run inference on an ESP32 using the TensorFlow Lite for Microcontrollers runtime. Measure predicted vs actual values and benchmark inference time."
+heroImage: "https://cdn.siliconwit.com/education/edge-ai-tinyml/tinyml-machine-learning-microcontrollers.png"
+---
+
+import TawkWidget from '../../../../components/TawkWidget.astro';
+import UniversalContentContributors from '../../../../components/UniversalContentContributors.astro';
+import InArticleAd from '../../../../components/InArticleAd.astro';
+import Copyright from '../../../../components/Copyright.astro';
+import BionicText from '../../../../components/BionicText.astro';
+import TailwindWrapper from '../../../../components/TailwindWrapper.jsx';
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Card, CardGrid, Badge, Steps, LinkButton, FileTree } from '@astrojs/starlight/components';
+
+<UniversalContentContributors 
+  contributors={frontmatter.contributors}
+/>
+
+
+
+import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTinymlComments.astro';
+
+Machine learning traditionally runs on powerful GPUs and cloud servers, but a growing class of models can run entirely on microcontrollers with kilobytes of RAM. In this first lesson you will walk through the complete TinyML pipeline: train a simple sine wave regression model in TensorFlow on your PC, quantize it, convert it to a C array, and deploy it on an ESP32 using the TensorFlow Lite for Microcontrollers (TFLM) interpreter. By the end you will see predicted sine values printed over serial and measure how fast inference runs on a 240 MHz Xtensa core. #TinyML #EdgeAI #ESP32
+
+## What is TinyML?
+
+TinyML refers to running machine learning inference on microcontrollers and ultra-low-power devices. The key distinction from traditional ML is the hardware budget. A cloud GPU has gigabytes of memory and teraflops of compute. A microcontroller has kilobytes of RAM, hundreds of kilobytes of flash, and clock speeds measured in tens or hundreds of megahertz.
+
+<Card title="The Core Idea" icon="star">
+Train the model on a powerful machine (your laptop, a cloud instance, Edge Impulse). Then compress and convert the trained model into a format that fits inside the MCU's flash. At runtime, a tiny interpreter loads the model, allocates a small memory arena, and executes inference on live sensor data. The result is a classification label, a regression value, or an anomaly score, produced entirely on-device.
+</Card>
+
+### Why Run ML on the Edge?
+
+| Benefit | Explanation |
+|---------|-------------|
+| **Low latency** | Inference takes milliseconds on-device. No network round-trip. |
+| **No connectivity needed** | The model is baked into firmware. Works offline. |
+| **Privacy** | Raw sensor data never leaves the device. Only results are transmitted. |
+| **Low power** | A Cortex-M4 running inference at 1 Hz draws single-digit milliamps. |
+| **Low cost** | A $2 MCU replaces a $50 SBC or a cloud API subscription. |
+
+## Hardware Constraints
+
+<InArticleAd />
+
+
+Before writing any code, internalize the resource budget of common TinyML targets.
+
+| MCU | CPU | Clock | Flash | SRAM | FPU | Typical Use |
+|-----|-----|-------|-------|------|-----|-------------|
+| ESP32 (Xtensa LX6) | Dual-core | 240 MHz | 4 MB | 520 KB | Yes | Wi-Fi/BLE + ML |
+| STM32F4 (Cortex-M4F) | Single-core | 168 MHz | 1 MB | 192 KB | Yes | Industrial ML |
+| RPi Pico (Cortex-M0+) | Dual-core | 133 MHz | 2 MB | 264 KB | No | Low-cost ML |
+| nRF52840 (Cortex-M4F) | Single-core | 64 MHz | 1 MB | 256 KB | Yes | BLE + ML |
+
+**Practical limits for model size:**
+- Flash: your model (as a C array) must fit in flash alongside the firmware. A typical budget is 50 KB to 500 KB for the model.
+- RAM: the TFLM interpreter needs a "tensor arena" in RAM to hold intermediate activations. Budget 20 KB to 100 KB depending on the model.
+- Compute: inference time depends on the number of multiply-accumulate operations. Int8 quantized models are 2x to 4x faster than float32 on Cortex-M4 with CMSIS-NN.
+
+## The ML Pipeline for Microcontrollers
+
+<InArticleAd />
+
+
+<Steps>
+1. **Collect or generate training data.**
+   For this lesson we generate synthetic sine wave data. In later lessons you will collect real sensor data.
+
+2. **Train a model in TensorFlow (or PyTorch, scikit-learn).**
+   Use standard Python ML tooling on your PC. The model architecture must be small enough to convert.
+
+3. **Convert to TensorFlow Lite (.tflite).**
+   The TFLite converter produces a FlatBuffer binary. Apply post-training quantization (int8) to shrink size and speed up inference.
+
+4. **Convert .tflite to a C array.**
+   The `xxd` utility (or a Python script) turns the binary into a `const unsigned char[]` that compiles into firmware.
+
+5. **Write firmware that runs the TFLM interpreter.**
+   Allocate a tensor arena, load the model, invoke the interpreter, and read the output tensor.
+
+6. **Flash, run, and evaluate.**
+   Measure accuracy against ground truth and log inference time.
+</Steps>
+
+## Project: Sine Wave Predictor on ESP32
+
+<InArticleAd />
+
+
+We will train a tiny neural network to approximate the function `y = sin(x)` over the range `[0, 2*pi]`. This is the canonical "hello world" of TinyML because it requires zero external hardware (just an ESP32 and a serial monitor) and it exercises every step of the pipeline.
+
+### Step 1: Train the Sine Model in Python
+
+Create a file called `train_sine_model.py` on your PC.
+
+```python
+# train_sine_model.py
+# Train a tiny sine wave regression model and export to TFLite (int8)
+
+import numpy as np
+import tensorflow as tf
+
+# Generate training data
+np.random.seed(42)
+x_values = np.random.uniform(0, 2 * np.pi, 1000).astype(np.float32)
+y_values = np.sin(x_values).astype(np.float32)
+
+# Add a small amount of noise to make training more realistic
+y_values += 0.1 * np.random.randn(1000).astype(np.float32)
+
+# Split into train and validation
+x_train, x_val = x_values[:800], x_values[800:]
+y_train, y_val = y_values[:800], y_values[800:]
+
+# Define a small fully connected model
+model = tf.keras.Sequential([
+    tf.keras.layers.Dense(16, activation='relu', input_shape=(1,)),
+    tf.keras.layers.Dense(16, activation='relu'),
+    tf.keras.layers.Dense(1)
+])
+
+model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+model.summary()
+
+# Train
+history = model.fit(
+    x_train, y_train,
+    epochs=500,
+    batch_size=32,
+    validation_data=(x_val, y_val),
+    verbose=1
+)
+
+# Save the Keras model
+model.save('sine_model.keras')
+print("Keras model saved.")
+
+# Convert to TFLite with int8 quantization
+def representative_dataset():
+    for i in range(100):
+        yield [np.array([[x_train[i]]], dtype=np.float32)]
+
+converter = tf.lite.TFLiteConverter.from_keras_model(model)
+converter.optimizations = [tf.lite.Optimize.DEFAULT]
+converter.representative_dataset = representative_dataset
+converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+converter.inference_input_type = tf.int8
+converter.inference_output_type = tf.int8
+
+tflite_model = converter.convert()
+
+# Save the quantized model
+with open('sine_model_int8.tflite', 'wb') as f:
+    f.write(tflite_model)
+
+print(f"TFLite model size: {len(tflite_model)} bytes")
+
+# Quick validation using the TFLite interpreter
+interpreter = tf.lite.Interpreter(model_content=tflite_model)
+interpreter.allocate_tensors()
+
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
+# Get quantization parameters
+input_scale = input_details[0]['quantization'][0]
+input_zero_point = input_details[0]['quantization'][1]
+output_scale = output_details[0]['quantization'][0]
+output_zero_point = output_details[0]['quantization'][1]
+
+print(f"Input scale: {input_scale}, zero_point: {input_zero_point}")
+print(f"Output scale: {output_scale}, zero_point: {output_zero_point}")
+
+# Test a few values
+test_x = np.array([0.0, 0.5, 1.0, 1.57, 3.14, 4.71, 6.28], dtype=np.float32)
+for x in test_x:
+    # Quantize input
+    x_q = np.int8(np.round(x / input_scale + input_zero_point))
+    interpreter.set_tensor(input_details[0]['index'], np.array([[x_q]], dtype=np.int8))
+    interpreter.invoke()
+    y_q = interpreter.get_tensor(output_details[0]['index'])[0][0]
+    # Dequantize output
+    y_pred = (y_q - output_zero_point) * output_scale
+    y_actual = np.sin(x)
+    print(f"x={x:.2f}  predicted={y_pred:.4f}  actual={y_actual:.4f}  error={abs(y_pred - y_actual):.4f}")
+```
+
+Run this script:
+
+```bash
+pip install tensorflow numpy
+python train_sine_model.py
+```
+
+You should see a model summary showing roughly 400 parameters and a TFLite file around 2 KB to 4 KB. The validation MAE should be under 0.15.
+
+### Step 2: Convert .tflite to a C Header
+
+Use the `xxd` utility to turn the binary into a C array.
+
+```bash
+xxd -i sine_model_int8.tflite > sine_model_data.h
+```
+
+This produces a file like:
+
+```c
+// sine_model_data.h (auto-generated by xxd)
+unsigned char sine_model_int8_tflite[] = {
+  0x20, 0x00, 0x00, 0x00, 0x54, 0x46, 0x4c, 0x33,
+  // ... hundreds of bytes ...
+};
+unsigned int sine_model_int8_tflite_len = 2480;
+```
+
+Edit the header to add `const` and place it in program memory:
+
+```c
+// sine_model_data.h
+#ifndef SINE_MODEL_DATA_H
+#define SINE_MODEL_DATA_H
+
+extern const unsigned char sine_model_int8_tflite[];
+extern const unsigned int sine_model_int8_tflite_len;
+
+#endif
+```
+
+And the corresponding `.c` file:
+
+```c
+// sine_model_data.c
+#include "sine_model_data.h"
+
+const unsigned char sine_model_int8_tflite[] = {
+  0x20, 0x00, 0x00, 0x00, 0x54, 0x46, 0x4c, 0x33,
+  // ... paste the full array from xxd output ...
+};
+const unsigned int sine_model_int8_tflite_len = 2480;
+```
+
+### Step 3: ESP-IDF Project Structure
+
+<FileTree>
+- sine_predictor/
+  - CMakeLists.txt
+  - main/
+    - CMakeLists.txt
+    - main.c
+    - sine_model_data.h
+    - sine_model_data.c
+  - components/
+    - tfmicro/
+      - (TFLite Micro source files)
+</FileTree>
+
+#### Adding TFLite Micro to ESP-IDF
+
+The official `tflite-micro` repository provides an ESP-IDF component. Clone it into your project's `components` directory:
+
+```bash
+mkdir -p sine_predictor/components
+cd sine_predictor/components
+git clone https://github.com/espressif/esp-tflite-micro.git tfmicro
+```
+
+Espressif maintains `esp-tflite-micro` as a ready-to-use ESP-IDF component. It includes CMSIS-NN optimized kernels for Xtensa.
+
+#### Top-Level CMakeLists.txt
+
+```cmake
+# sine_predictor/CMakeLists.txt
+cmake_minimum_required(VERSION 3.16)
+
+set(EXTRA_COMPONENT_DIRS "components/tfmicro")
+
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(sine_predictor)
+```
+
+#### Main Component CMakeLists.txt
+
+```cmake
+# sine_predictor/main/CMakeLists.txt
+idf_component_register(
+    SRCS "main.c" "sine_model_data.c"
+    INCLUDE_DIRS "."
+    REQUIRES esp-tflite-micro
+)
+```
+
+### Step 4: Firmware (ESP-IDF C with TFLM)
+
+The TFLM C++ API is wrapped here in a C-compatible `main.c` file. Since TFLM is C++, rename this file to `main.cc` if your build requires it, or use `extern "C"` as shown.
+
+```cpp
+// main/main.cc
+// Sine wave predictor using TensorFlow Lite for Microcontrollers on ESP32
+
+#include <cstdio>
+#include <cmath>
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+#include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
+#include "tensorflow/lite/micro/micro_interpreter.h"
+#include "tensorflow/lite/schema/schema_generated.h"
+
+#include "sine_model_data.h"
+
+static const char *TAG = "sine_predictor";
+
+// Tensor arena: working memory for the interpreter.
+// Size depends on the model. 4 KB is generous for this tiny model.
+constexpr int kTensorArenaSize = 4 * 1024;
+alignas(16) static uint8_t tensor_arena[kTensorArenaSize];
+
+extern "C" void app_main(void) {
+    ESP_LOGI(TAG, "Sine wave predictor starting");
+
+    // Load the model from the C array
+    const tflite::Model *model = tflite::GetModel(sine_model_int8_tflite);
+    if (model->version() != TFLITE_SCHEMA_VERSION) {
+        ESP_LOGE(TAG, "Model schema version mismatch: got %lu, expected %d",
+                 model->version(), TFLITE_SCHEMA_VERSION);
+        return;
+    }
+
+    // Register only the ops this model uses (keeps binary small)
+    static tflite::MicroMutableOpResolver<3> resolver;
+    resolver.AddFullyConnected();
+    resolver.AddRelu();
+    resolver.AddQuantize();
+
+    // Build the interpreter
+    static tflite::MicroInterpreter interpreter(model, resolver,
+                                                 tensor_arena, kTensorArenaSize);
+    TfLiteStatus allocate_status = interpreter.AllocateTensors();
+    if (allocate_status != kTfLiteOk) {
+        ESP_LOGE(TAG, "AllocateTensors() failed");
+        return;
+    }
+
+    // Get input and output tensor pointers
+    TfLiteTensor *input = interpreter.input(0);
+    TfLiteTensor *output = interpreter.output(0);
+
+    // Log tensor details
+    ESP_LOGI(TAG, "Input type: %d, shape: [%d, %d]",
+             input->type, input->dims->data[0], input->dims->data[1]);
+    ESP_LOGI(TAG, "Output type: %d, shape: [%d, %d]",
+             output->type, output->dims->data[0], output->dims->data[1]);
+
+    // Get quantization parameters
+    float input_scale = input->params.scale;
+    int32_t input_zero_point = input->params.zero_point;
+    float output_scale = output->params.scale;
+    int32_t output_zero_point = output->params.zero_point;
+
+    ESP_LOGI(TAG, "Input  scale=%.6f  zero_point=%ld", input_scale, input_zero_point);
+    ESP_LOGI(TAG, "Output scale=%.6f  zero_point=%ld", output_scale, output_zero_point);
+
+    // Run inference over a sweep of x values
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "%-8s %-12s %-12s %-12s %-10s", "x", "predicted", "actual", "error", "time_us");
+
+    const int num_points = 50;
+    float total_error = 0.0f;
+    int64_t total_time_us = 0;
+
+    for (int i = 0; i < num_points; i++) {
+        float x = (2.0f * M_PI * i) / num_points;
+
+        // Quantize the input
+        int8_t x_quantized = (int8_t)((x / input_scale) + input_zero_point);
+        input->data.int8[0] = x_quantized;
+
+        // Run inference and time it
+        int64_t start = esp_timer_get_time();
+        TfLiteStatus invoke_status = interpreter.Invoke();
+        int64_t end = esp_timer_get_time();
+
+        if (invoke_status != kTfLiteOk) {
+            ESP_LOGE(TAG, "Invoke failed at x=%.2f", x);
+            continue;
+        }
+
+        // Dequantize the output
+        int8_t y_quantized = output->data.int8[0];
+        float y_predicted = (y_quantized - output_zero_point) * output_scale;
+        float y_actual = sinf(x);
+        float error = fabsf(y_predicted - y_actual);
+
+        int64_t inference_us = end - start;
+        total_error += error;
+        total_time_us += inference_us;
+
+        ESP_LOGI(TAG, "%-8.3f %-12.4f %-12.4f %-12.4f %-10lld",
+                 x, y_predicted, y_actual, error, inference_us);
+    }
+
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "Average error: %.4f", total_error / num_points);
+    ESP_LOGI(TAG, "Average inference time: %lld us", total_time_us / num_points);
+    ESP_LOGI(TAG, "Total arena used: %zu bytes", interpreter.arena_used_bytes());
+    ESP_LOGI(TAG, "Model size: %u bytes", sine_model_int8_tflite_len);
+
+    // Keep the task alive
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+}
+```
+
+### Step 5: Build and Flash
+
+```bash
+cd sine_predictor
+idf.py set-target esp32
+idf.py build
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+### Expected Output
+
+You should see a table printed over serial with 50 data points. Typical results on an ESP32 at 240 MHz:
+
+| Metric | Typical Value |
+|--------|---------------|
+| Model size (int8 .tflite) | 2.4 KB to 3.5 KB |
+| Tensor arena used | ~1.2 KB |
+| Average inference time | 30 to 80 microseconds |
+| Average absolute error | 0.05 to 0.15 |
+
+The inference time is remarkable. At 50 microseconds per inference, you could run 20,000 predictions per second, far more than any real sensor would need.
+
+## Understanding the TFLM Components
+
+<InArticleAd />
+
+
+### The Model (FlatBuffer)
+
+TFLite models use Google's FlatBuffers serialization format. The `.tflite` file contains the model architecture (which ops, in what order), the trained weights (quantized to int8), and metadata (tensor shapes, quantization parameters). When you embed this as a C array, it lives in flash. The interpreter reads it directly from flash without copying it to RAM.
+
+### The Op Resolver
+
+```cpp
+static tflite::MicroMutableOpResolver<3> resolver;
+resolver.AddFullyConnected();
+resolver.AddRelu();
+resolver.AddQuantize();
+```
+
+The template parameter `<3>` is the maximum number of ops. Each `Add...()` call registers a kernel implementation. Only register the ops your model actually uses. This keeps the binary small. If you register `AllOpsResolver` instead, every kernel gets linked in, adding 100 KB or more to the firmware.
+
+### The Tensor Arena
+
+```cpp
+constexpr int kTensorArenaSize = 4 * 1024;
+alignas(16) static uint8_t tensor_arena[kTensorArenaSize];
+```
+
+This is a contiguous block of RAM that the interpreter uses for input tensors, output tensors, and all intermediate activation buffers. The alignment matters for SIMD operations. If the arena is too small, `AllocateTensors()` will fail. If it is too large, you waste RAM. Use `interpreter.arena_used_bytes()` to find the actual usage and size the arena accordingly.
+
+### The Interpreter
+
+The `MicroInterpreter` is the runtime engine. It:
+
+1. Parses the FlatBuffer model.
+2. Allocates tensors within the arena.
+3. On each `Invoke()` call, executes the ops in sequence.
+4. Writes the result to the output tensor.
+
+There is no dynamic memory allocation after `AllocateTensors()`. This deterministic behavior is critical for real-time embedded systems.
+
+## Quantization: Float32 vs Int8
+
+<InArticleAd />
+
+
+The model we trained in Python used float32 weights and activations. The TFLite converter with `representative_dataset` performed post-training quantization to int8. Here is what changed:
+
+| Property | Float32 Model | Int8 Model |
+|----------|---------------|------------|
+| Weight precision | 32-bit float | 8-bit integer |
+| Model file size | ~8 KB | ~2.5 KB |
+| Inference speed on ESP32 | ~120 us | ~50 us |
+| RAM for activations | ~4 KB | ~1.2 KB |
+| Accuracy (MAE) | ~0.05 | ~0.08 |
+
+The int8 model is smaller, faster, and uses less RAM, at the cost of slightly higher error. For a sine wave, the accuracy difference is negligible. For complex models the trade-off becomes more important, which is why Lesson 4 covers quantization in depth.
+
+## Exercises
+
+<InArticleAd />
+
+
+<CardGrid>
+  <Card title="Exercise 1: Modify the Network" icon="pencil">
+  Change the hidden layer sizes from 16 to 8 neurons each. Retrain, convert, and deploy. How does the model size change? How does accuracy change? Find the smallest network that keeps MAE under 0.2.
+  </Card>
+
+  <Card title="Exercise 2: Float32 Comparison" icon="pencil">
+  Export the model without quantization (remove the `representative_dataset` and int8 settings from the converter). Deploy the float32 model on ESP32 and compare inference time, arena size, and accuracy against the int8 version.
+  </Card>
+
+  <Card title="Exercise 3: Continuous Prediction" icon="pencil">
+  Modify the firmware to run inference in a loop at 10 Hz (every 100 ms) and print the results. This simulates a real sensor pipeline where new data arrives continuously.
+  </Card>
+
+  <Card title="Exercise 4: Add cos(x)" icon="pencil">
+  Modify the training script to predict both sin(x) and cos(x) simultaneously (2 output neurons). Update the firmware to read both outputs. This introduces multi-output regression.
+  </Card>
+</CardGrid>
+
+## What Comes Next
+
+<InArticleAd />
+
+
+You now have the complete mental model: train on PC, quantize, convert to C, run on MCU. In the next lesson, you will use Edge Impulse to collect real accelerometer data, train a motion classifier in the cloud, and deploy it back to the ESP32. The pipeline gets more practical, but the core pattern stays the same.
+
+<EdgeAiTinymlComments />
+
+
+
+<InArticleAd />
+<TawkWidget />
+<Copyright />
