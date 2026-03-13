@@ -650,7 +650,7 @@ static void anomaly_detection_task(void *arg)
     static tflite::MicroMutableOpResolver<3> resolver;
     resolver.AddFullyConnected();
     resolver.AddReshape();
-    resolver.AddLogistic();  /* If using sigmoid in decoder */
+    resolver.AddRelu();
 
     static tflite::MicroInterpreter interpreter(
         model, resolver, s_tensor_arena, TENSOR_ARENA_SIZE);

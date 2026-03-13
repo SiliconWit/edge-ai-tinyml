@@ -542,12 +542,17 @@ def make_silence_dataset(noise_files, num_samples=2000):
 
 silence_data = make_silence_dataset(silence_files)
 
+# Convert silence data to a tf.data.Dataset
+silence_mfccs, silence_labels = zip(*silence_data)
+ds_silence = tf.data.Dataset.from_tensor_slices(
+    (list(silence_mfccs), list(silence_labels)))
+
 # Combine and shuffle
-full_ds = ds_yes.concatenate(ds_no).concatenate(ds_unknown)
+full_ds = ds_yes.concatenate(ds_no).concatenate(ds_unknown).concatenate(ds_silence)
 full_ds = full_ds.shuffle(10000)
 
 # Split 80/10/10
-total = len(yes_files) + len(no_files) + len(unknown_files)
+total = len(yes_files) + len(no_files) + len(unknown_files) + len(silence_data)
 train_size = int(0.8 * total)
 val_size = int(0.1 * total)
 
@@ -1013,7 +1018,7 @@ This approach reduces average current from ~80 mA to ~20 mA at the cost of poten
   - CMakeLists.txt
   - main/
     - CMakeLists.txt
-    - main.c
+    - main.cc
     - wake_word_model.h
     - mel_filterbank.h
   - components/
@@ -1031,7 +1036,7 @@ project(wake-word-detector)
 ### main/CMakeLists.txt
 
 ```cmake
-idf_component_register(SRCS "main.c"
+idf_component_register(SRCS "main.cc"
                        INCLUDE_DIRS "."
                        REQUIRES driver esp_timer)
 ```

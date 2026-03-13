@@ -253,7 +253,7 @@ const unsigned int sine_model_int8_tflite_len = 2480;
   - CMakeLists.txt
   - main/
     - CMakeLists.txt
-    - main.c
+    - main.cc
     - sine_model_data.h
     - sine_model_data.c
   - components/
@@ -289,7 +289,7 @@ project(sine_predictor)
 ```cmake
 # sine_predictor/main/CMakeLists.txt
 idf_component_register(
-    SRCS "main.c" "sine_model_data.c"
+    SRCS "main.cc" "sine_model_data.c"
     INCLUDE_DIRS "."
     REQUIRES esp-tflite-micro
 )
@@ -365,8 +365,8 @@ extern "C" void app_main(void) {
     float output_scale = output->params.scale;
     int32_t output_zero_point = output->params.zero_point;
 
-    ESP_LOGI(TAG, "Input  scale=%.6f  zero_point=%ld", input_scale, input_zero_point);
-    ESP_LOGI(TAG, "Output scale=%.6f  zero_point=%ld", output_scale, output_zero_point);
+    ESP_LOGI(TAG, "Input  scale=%.6f  zero_point=%d", input_scale, input_zero_point);
+    ESP_LOGI(TAG, "Output scale=%.6f  zero_point=%d", output_scale, output_zero_point);
 
     // Run inference over a sweep of x values
     ESP_LOGI(TAG, "");
@@ -380,7 +380,7 @@ extern "C" void app_main(void) {
         float x = (2.0f * M_PI * i) / num_points;
 
         // Quantize the input
-        int8_t x_quantized = (int8_t)((x / input_scale) + input_zero_point);
+        int8_t x_quantized = (int8_t)(roundf(x / input_scale) + input_zero_point);
         input->data.int8[0] = x_quantized;
 
         // Run inference and time it

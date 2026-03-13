@@ -838,7 +838,7 @@ static void classification_task(void *arg)
 
 /* ---- Entry point ---- */
 
-void app_main(void)
+extern "C" void app_main(void)
 {
     ESP_LOGI(TAG, "ESP32-CAM Image Classifier starting");
 
@@ -872,7 +872,7 @@ project(cam-classifier)
 
 ```cmake
 # main/CMakeLists.txt
-idf_component_register(SRCS "main.c"
+idf_component_register(SRCS "main.cc"
                        INCLUDE_DIRS "."
                        REQUIRES esp_timer driver)
 ```
@@ -1030,7 +1030,7 @@ Notes:
   - main/
     - CMakeLists.txt
     - idf_component.yml
-    - main.c
+    - main.cc
     - person_detect_model.h
     - mobilenet_model.h
 </FileTree>

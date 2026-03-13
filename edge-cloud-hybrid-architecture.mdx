@@ -797,6 +797,11 @@ When a new model is written to flash, the interpreter must be reinitialized. The
 static const int kTensorArenaSize = 32 * 1024;
 static uint8_t tensor_arena[kTensorArenaSize];
 static tflite::MicroInterpreter *interpreter = nullptr;
+static uint8_t interpreter_buf[sizeof(tflite::MicroInterpreter)];
+
+// Op resolver: initialized once at file scope
+static tflite::MicroMutableOpResolver<4> resolver;
+static bool resolver_initialized = false;
 
 // Fallback: compiled-in model for first boot
 extern const unsigned char g_default_model[];
@@ -811,23 +816,33 @@ void reload_tflite_interpreter(const uint8_t *model_data, size_t model_size)
         return;
     }
 
-    static tflite::MicroMutableOpResolver<4> resolver;
-    // Add only the ops your autoencoder uses
-    resolver.AddFullyConnected();
-    resolver.AddRelu();
-    resolver.AddReshape();
-    resolver.AddQuantize();
+    // Initialize the resolver once
+    if (!resolver_initialized) {
+        resolver.AddFullyConnected();
+        resolver.AddRelu();
+        resolver.AddReshape();
+        resolver.AddQuantize();
+        resolver_initialized = true;
+    }
 
-    static tflite::MicroInterpreter static_interpreter(
+    // Destroy old interpreter if it exists
+    if (interpreter) {
+        interpreter->~MicroInterpreter();
+    }
+
+    // Construct a new interpreter in the pre-allocated buffer
+    interpreter = new (interpreter_buf) tflite::MicroInterpreter(
         model, resolver, tensor_arena, kTensorArenaSize);
 
-    if (static_interpreter.AllocateTensors() != kTfLiteOk) {
+    if (interpreter->AllocateTensors() != kTfLiteOk) {
         printf("AllocateTensors failed for new model\n");
+        interpreter->~MicroInterpreter();
+        interpreter = nullptr;
         return;
     }
 
-    interpreter = &static_interpreter;
-    printf("Interpreter reloaded with new model (%d bytes)\n", model_size);
+    printf("Interpreter reloaded with new model (%u bytes)\n",
+           (unsigned)model_size);
 }
 ```
 
@@ -1089,6 +1104,7 @@ Each message uses a consistent JSON structure with a timestamp, making it straig
 #include <string.h>
 #include <time.h>
 #include "esp_log.h"
+#include "esp_wifi.h"
 #include "mqtt_client.h"
 #include "cJSON.h"
 #include "tiered_inference.h"

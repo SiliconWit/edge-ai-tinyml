@@ -25,7 +25,7 @@ import { Card, CardGrid, Badge, Steps, LinkButton, FileTree } from '@astrojs/sta
 
 import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTinymlComments.astro';
 
-In Lesson 2 you used Edge Impulse to handle model conversion and deployment automatically. That convenience comes at the cost of understanding. In this lesson you will work directly with the TensorFlow Lite for Microcontrollers (TFLM) runtime. You will train a gesture classifier locally in TensorFlow, walk through each stage of model conversion, and deploy the same model on both an ESP32 and an STM32. By porting the model across two different architectures, you will understand exactly how the TFLM interpreter, tensor arena, and op resolver work, and where platform-specific code lives. #TFLiteMicro #ESP32 #STM32
+Platforms like Edge Impulse can handle model conversion and deployment automatically, but that convenience comes at the cost of understanding. This lesson takes you inside the TensorFlow Lite for Microcontrollers (TFLM) runtime. You will train a gesture classifier locally in TensorFlow, walk through each stage of model conversion, and deploy the same model on both an ESP32 and an STM32. By porting the model across two different architectures, you will understand exactly how the TFLM interpreter, tensor arena, and op resolver work, and where platform-specific code lives. #TFLiteMicro #ESP32 #STM32
 
 ## What We Are Building
 
@@ -453,8 +453,8 @@ extern "C" void app_main(void) {
     int32_t output_zp = output->params.zero_point;
 
     ESP_LOGI(TAG, "Arena used: %zu bytes", interpreter.arena_used_bytes());
-    ESP_LOGI(TAG, "Input: scale=%.6f zp=%ld", input_scale, input_zp);
-    ESP_LOGI(TAG, "Output: scale=%.6f zp=%ld", output_scale, output_zp);
+    ESP_LOGI(TAG, "Input: scale=%.6f zp=%d", input_scale, input_zp);
+    ESP_LOGI(TAG, "Output: scale=%.6f zp=%d", output_scale, output_zp);
 
     float raw_buffer[NUM_FEATURES];
     int interval_ms = 1000 / SAMPLE_RATE_HZ;
@@ -479,7 +479,7 @@ extern "C" void app_main(void) {
             // Clamp to [0, 1]
             if (normalized < 0.0f) normalized = 0.0f;
             if (normalized > 1.0f) normalized = 1.0f;
-            input->data.int8[i] = (int8_t)(normalized / input_scale + input_zp);
+            input->data.int8[i] = (int8_t)roundf(normalized / input_scale + input_zp);
         }
 
         // Run inference
@@ -547,6 +547,7 @@ The same TFLite model runs on STM32 with minimal changes. The core inference cod
 // Gesture classifier using TFLite Micro on STM32F411
 
 #include <cstdio>
+#include <cmath>
 #include <cstring>
 #include "stm32f4xx_hal.h"
 
@@ -635,7 +636,7 @@ int main(void) {
                          (GESTURE_INPUT_MAX - GESTURE_INPUT_MIN);
             if (norm < 0.0f) norm = 0.0f;
             if (norm > 1.0f) norm = 1.0f;
-            input->data.int8[i] = (int8_t)(norm / input_scale + input_zp);
+            input->data.int8[i] = (int8_t)roundf(norm / input_scale + input_zp);
         }
 
         // Time the inference

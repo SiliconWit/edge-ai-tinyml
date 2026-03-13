@@ -138,10 +138,8 @@ class MPU6050:
         """Read 14 bytes: accel(6) + temp(2) + gyro(6)."""
         data = self.i2c.readfrom_mem(self.addr, self.ACCEL_XOUT_H, 14)
         vals = struct.unpack('>hhhhhhh', data)
-        # Return ax, ay, az, gx, gy, gz (skip temperature)
-        return vals[0], vals[1], vals[2], vals[3], vals[4], vals[5]
-        # Note: vals[3] is temp, vals[4:7] is gyro. Fix indexing:
-        # accel = vals[0:3], temp = vals[3], gyro = vals[4:7]
+        # Return ax, ay, az, gx, gy, gz (skip temperature at vals[3])
+        return vals[0], vals[1], vals[2], vals[4], vals[5], vals[6]
 
     def read_scaled(self):
         """Return scaled values in g (accel) and deg/s (gyro)."""
@@ -156,7 +154,7 @@ class MPU6050:
 ```
 
 :::note
-The `read_raw` method returns 7 values from the 14-byte burst read. The order is: accel_x, accel_y, accel_z, temperature, gyro_x, gyro_y, gyro_z. We skip the temperature value in `read_scaled`. Adjust the indexing if your struct unpacking differs.
+The `read_raw` method unpacks 7 values from the 14-byte burst read (accel_x, accel_y, accel_z, temperature, gyro_x, gyro_y, gyro_z) but returns only the 6 IMU axes, skipping the temperature value at index 3. The `read_scaled` method then divides by the sensitivity factors: 16384 LSB/g for the accelerometer (at +/-2g range) and 131 LSB/(deg/s) for the gyroscope (at +/-250 deg/s range).
 :::
 
 ### Data Collection Script
