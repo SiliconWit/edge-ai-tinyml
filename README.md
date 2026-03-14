@@ -12,6 +12,8 @@ sidebar:
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Contributors Welcome](https://img.shields.io/badge/contributors-welcome-orange)
 
+**Read this course at:** [https://siliconwit.com/education/edge-ai-tinyml/](https://siliconwit.com/education/edge-ai-tinyml/)
+
 A hands-on course covering machine learning on microcontrollers. You will train, quantize, and deploy TinyML models for keyword spotting, gesture recognition, anomaly detection, image classification, and edge-cloud hybrid architectures.
 
 ## Lessons
