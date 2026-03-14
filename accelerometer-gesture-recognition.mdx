@@ -25,6 +25,26 @@ import { Card, CardGrid, Badge, Steps, LinkButton, FileTree } from '@astrojs/sta
 
 import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTinymlComments.astro';
 
+```text
+  Data Collection to Deployment
+  ──────────────────────────────────────────
+  1. Collect (MicroPython on Pico)
+     shake: 50 samples x 6 axes x 100 Hz
+     tilt:  50 samples
+     tap:   50 samples
+     circle: 50 samples
+        │
+  2. Train (TensorFlow on PC)
+     Dense NN: 600 ► 64 ► 32 ► 4
+     Accuracy: ~95% on test set
+        │
+  3. Quantize + Convert
+     float32 (32 KB) ──► int8 (8 KB)
+        │
+  4. Deploy to Pico (C SDK) AND STM32 (HAL)
+     Same .tflite, different platform code
+```
+
 Gesture recognition turns an inexpensive accelerometer into an intuitive input device. Instead of buttons or touchscreens, the user shakes, tilts, taps, or draws a circle in the air, and the microcontroller classifies the motion in real time. This lesson walks through the full pipeline: collecting labeled IMU data, training a small neural network, deploying TFLite Micro models on both the RPi Pico and STM32, and comparing the two platforms side by side. #GestureRecognition #TinyML #EmbeddedML
 
 ## What We Are Building
@@ -54,6 +74,29 @@ A wearable or handheld device that recognizes four gestures (shake, tilt, tap, c
 | S1 | MPU6050 breakout module | 1 | I2C, 3.3V compatible |
 | | RGB LED or 3 discrete LEDs | 1 | For gesture feedback |
 | | Breadboard + jumper wires | 1 set | |
+
+```text
+  Gesture Recognition Pipeline
+  ──────────────────────────────────────────
+  MPU6050       Collect         Preprocess
+  (100 Hz) ──► 1s window ──► Normalize to
+  ax,ay,az     (100 x 6       [-1, 1]
+  gx,gy,gz      = 600 vals)      │
+                                  ▼
+                            ┌───────────┐
+                            │ Dense NN  │
+                            │ 600 ► 64  │
+                            │  64 ► 32  │
+                            │  32 ► 4   │
+                            └─────┬─────┘
+                                  │
+                    ┌─────────────┼──────────┐
+                    ▼             ▼          ▼
+                 shake         tilt       circle
+                 (0.92)       (0.04)     (0.03)
+                   ▲
+                   └── highest = prediction
+```
 
 ## Gesture Recognition Pipeline
 

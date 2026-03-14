@@ -57,6 +57,60 @@ An ESP32 running the autoencoder from Lesson 7 (anomaly detection on motor vibra
 | | Wi-Fi network | 1 | ESP32 and server on same network |
 | | Breadboard + jumper wires | 1 set | |
 
+```text
+  OTA Model Update Sequence
+  ──────────────────────────────────────────
+  Cloud Server                  ESP32
+  ────────────                  ─────
+  Accumulate escalated data
+       │
+  Retrain edge model
+       │
+  Quantize to int8
+       │
+  Host model.tflite on HTTP
+       │                   GET /model/v2.tflite
+       ◄───────────────────────────┤
+       │                           │
+  Send .tflite bytes ─────────────►│
+       │                           │
+       │                   Write to flash partition
+       │                   Verify checksum
+       │                   Swap model pointer
+       │                   Log: "Model v2 active"
+       │                           │
+       │                   Resume inference
+       │                   with new model
+```
+
+```text
+  Edge-Cloud Hybrid Decision Flow
+  ──────────────────────────────────────────
+  Sensor Data ──► Edge Model (12 KB, ESP32)
+                      │
+                      ▼
+              ┌───────────────┐
+              │ MSE < low_thr │──► NORMAL
+              │               │    (local decision)
+              │ MSE > hi_thr  │──► ANOMALY
+              │               │    (local decision)
+              │ low < MSE < hi│──► UNCERTAIN
+              └───────┬───────┘       │
+                      │               │ escalate
+                      │               ▼
+                      │    Cloud Model (200 KB)
+                      │        │
+                      │        ▼
+                      │    Definitive answer
+                      │        │
+                      │    OTA retrain loop:
+                      │    accumulated data ──►
+                      │    retrain edge model ──►
+                      │    push .tflite via HTTP
+                      ▼
+               MQTT Dashboard
+```
+
 ## Architecture Overview
 
 <InArticleAd />

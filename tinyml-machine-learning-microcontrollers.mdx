@@ -35,6 +35,22 @@ TinyML refers to running machine learning inference on microcontrollers and ultr
 Train the model on a powerful machine (your laptop, a cloud instance, Edge Impulse). Then compress and convert the trained model into a format that fits inside the MCU's flash. At runtime, a tiny interpreter loads the model, allocates a small memory arena, and executes inference on live sensor data. The result is a classification label, a regression value, or an anomaly score, produced entirely on-device.
 </Card>
 
+```text
+  Cloud ML vs Edge ML
+  ──────────────────────────────────────────
+  Cloud ML:
+  Sensor ──WiFi──► Cloud GPU ──► Result
+          ~100ms    ~50ms        ~100ms
+          network   inference    network
+          Total: ~250ms + connectivity required
+
+  Edge ML (TinyML):
+  Sensor ──► MCU ──► Result
+              ~5ms
+              inference
+          Total: ~5ms, works offline
+```
+
 ### Why Run ML on the Edge?
 
 | Benefit | Explanation |
@@ -44,6 +60,25 @@ Train the model on a powerful machine (your laptop, a cloud instance, Edge Impul
 | **Privacy** | Raw sensor data never leaves the device. Only results are transmitted. |
 | **Low power** | A Cortex-M4 running inference at 1 Hz draws single-digit milliamps. |
 | **Low cost** | A 2 USD MCU replaces a 50 USD SBC or a cloud API subscription. |
+
+```text
+  TinyML Pipeline: Train to Deploy
+  ──────────────────────────────────────────
+  PC / Cloud                MCU (ESP32)
+  ──────────                ────────────
+  1. Collect         5. Flash C array
+     training data      to MCU flash
+       │                    │
+  2. Train model     6. TFLM interpreter
+     (TensorFlow)       loads model
+       │                    │
+  3. Quantize        7. Feed live sensor
+     float32 → int8     data as input
+       │                    │
+  4. Convert to      8. Get prediction
+     .tflite → C        (class label or
+     header array        regression value)
+```
 
 ## Hardware Constraints
 

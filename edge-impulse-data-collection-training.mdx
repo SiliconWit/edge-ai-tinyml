@@ -25,6 +25,27 @@ import { Card, CardGrid, Badge, Steps, LinkButton, FileTree } from '@astrojs/sta
 
 import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTinymlComments.astro';
 
+```text
+  Edge Impulse Workflow
+  ──────────────────────────────────────────
+  ESP32 + MPU6050
+    │
+    │ Serial forwarder
+    ▼
+  Edge Impulse Studio (cloud)
+    │
+    ├──► 1. Data Collection (label samples)
+    ├──► 2. Impulse Design
+    │       ├── Spectral Features (FFT)
+    │       └── Neural Network Classifier
+    ├──► 3. Train Model (cloud GPU)
+    ├──► 4. Test on held-out data
+    └──► 5. Deploy as C++ Library
+              │
+              ▼
+         ESP32 firmware (inference)
+```
+
 Real sensor data is messy. Collecting it, labeling it, extracting useful features, and iterating on models by hand is tedious and error prone. Edge Impulse is a cloud platform that handles the entire pipeline from raw sensor data to a deployable C++ library. In this lesson you will collect accelerometer data from an MPU6050 connected to an ESP32, upload it to Edge Impulse, train a motion classifier that distinguishes between idle, walking, and running, and deploy the quantized model back to the ESP32 for real-time inference. #EdgeImpulse #TinyML #MotionClassifier
 
 ## What We Are Building
@@ -54,6 +75,22 @@ A wearable-style motion classifier that reads 3-axis accelerometer data from an 
 | D1 | LED (any color) | 1 | For activity indicator |
 | R1 | 220 ohm resistor | 1 | Current limiting for LED |
 | | Breadboard + jumper wires | 1 set | |
+
+```text
+  Impulse Design (Edge Impulse)
+  ──────────────────────────────────────────
+  Raw Data         Processing      Learning
+  ─────────        ──────────      ────────
+  ┌──────────┐    ┌──────────┐   ┌────────┐
+  │ Accel X  │    │ Spectral │   │ Neural │
+  │ Accel Y  ├───►│ Features ├──►│Network │
+  │ Accel Z  │    │ (FFT,    │   │Classif.│
+  │ 50 Hz    │    │  peaks,  │   │        │
+  │ 2s window│    │  energy) │   │ idle   │
+  └──────────┘    └──────────┘   │ walk   │
+  100 samples      33 features   │ run    │
+  x 3 axes                       └────────┘
+```
 
 ### Wiring
 

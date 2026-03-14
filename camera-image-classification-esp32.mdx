@@ -25,6 +25,30 @@ import { Card, CardGrid, Badge, Steps, LinkButton, FileTree } from '@astrojs/sta
 
 import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTinymlComments.astro';
 
+```text
+  ESP32-CAM Memory Layout
+  ──────────────────────────────────────────
+  Internal SRAM (~520 KB)
+  ┌─────────────────────────────────────┐
+  │ FreeRTOS heap + task stacks  200 KB │
+  │ TFLM interpreter + ops       50 KB │
+  │ Tensor arena                100 KB │
+  │ Misc (WiFi, drivers)        170 KB │
+  └─────────────────────────────────────┘
+
+  PSRAM (4 MB, SPI-connected)
+  ┌─────────────────────────────────────┐
+  │ Camera frame buffer (QVGA) 150 KB  │
+  │ Resized input (96x96)        9 KB  │
+  │ Model weights (flash-mapped)250 KB │
+  │ Available                  ~3.5 MB │
+  └─────────────────────────────────────┘
+
+  Key: tensor arena MUST be in internal
+  SRAM for speed. Image buffers can use
+  PSRAM (slower but larger).
+```
+
 Image classification is the most demanding TinyML task you can run on a microcontroller. A single 96x96 grayscale image is 9,216 bytes. A 96x96 RGB image is 27,648 bytes. The model weights, intermediate activations, and the image buffer all compete for the same limited RAM. The ESP32-CAM module solves part of this problem with 4 MB of PSRAM, but you still need careful memory management to make everything fit. This capstone lesson puts together everything from the course: model training, quantization, TFLM deployment, and real-time embedded application logic, all applied to the hardest modality. #ComputerVision #TinyML #ESP32CAM
 
 ## What We Are Building
@@ -54,6 +78,28 @@ An ESP32-CAM module (AI-Thinker variant with OV2640 camera and 4 MB PSRAM) that 
 | U1 | ESP32-CAM (AI-Thinker) | 1 | OV2640 camera, 4 MB PSRAM |
 | | USB-to-serial adapter (e.g., FTDI FT232RL) | 1 | For programming and serial output |
 | | Jumper wires | 4 | For serial connection |
+
+```text
+  Image Processing Pipeline (on ESP32)
+  ──────────────────────────────────────────
+  OV2640 Camera
+  1600x1200 JPEG
+       │
+       ▼ decode + resize
+  96 x 96 grayscale (9,216 bytes)
+       │
+       ▼ normalize to [0, 1] or [-128, 127]
+  96 x 96 x 1 int8 tensor
+       │
+       ▼ TFLM inference (~200 ms)
+  ┌────────────────────────┐
+  │ person:    0.87        │
+  │ no_person: 0.13        │
+  └────────────────────────┘
+       │
+       ▼ if person > 0.7
+  LED flash + serial output
+```
 
 :::note
 The ESP32-CAM does not have a USB port. You need an external USB-to-serial adapter for programming and serial communication. Some carrier boards (e.g., ESP32-CAM-MB) include a USB interface. If you have one of those, you can skip the separate adapter.

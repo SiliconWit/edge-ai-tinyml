@@ -51,9 +51,51 @@ A 3-class gesture classifier (wave, punch, flex) that runs on both ESP32 and STM
 
 The TensorFlow Lite for Microcontrollers runtime has four key components. Understanding each one is essential for debugging deployment issues.
 
+```text
+  TFLM Runtime Components
+  ──────────────────────────────────────────
+  Flash (read-only)         RAM (tensor arena)
+  ──────────────────        ──────────────────
+  ┌──────────────────┐     ┌────────────────┐
+  │ Model FlatBuffer │     │ Input tensor   │
+  │ (weights + graph)│     │ [150 x int8]   │
+  │ ~8 KB            │     ├────────────────┤
+  └──────────────────┘     │ Layer 1 output │
+                           │ [64 x int8]    │
+  ┌──────────────────┐     ├────────────────┤
+  │ TFLM Interpreter │     │ Layer 2 output │
+  │ code (~30 KB)    │     │ [32 x int8]    │
+  └──────────────────┘     ├────────────────┤
+                           │ Output tensor  │
+  ┌──────────────────┐     │ [3 x int8]     │
+  │ Op Resolver      │     └────────────────┘
+  │ (selected ops)   │      Total arena: ~4 KB
+  └──────────────────┘
+```
+
 ### 1. The Model (FlatBuffer)
 
 The `.tflite` file is a FlatBuffers binary that encodes the model graph (operators and their connections), the quantized weights, tensor shapes and types, and quantization parameters (scale and zero point for each tensor). When embedded as a `const unsigned char[]` in firmware, the model lives in flash. The interpreter reads it in place; there is no copy to RAM.
+
+```text
+  Model Conversion Pipeline
+  ──────────────────────────────────────────
+  TensorFlow (Python, PC)
+  model.h5 (float32, ~32 KB)
+       │
+       ▼ TFLiteConverter
+  model.tflite (int8, ~8 KB)
+       │
+       ▼ xxd -i model.tflite > model_data.h
+  const unsigned char model_data[] = {
+    0x20, 0x00, 0x00, 0x00, 0x54, 0x46,
+    0x4C, 0x33, ...  // FlatBuffer binary
+  };
+       │
+       ▼ #include "model_data.h"
+  ESP32 / STM32 firmware
+  (model lives in flash, read in place)
+```
 
 ### 2. The Op Resolver
 

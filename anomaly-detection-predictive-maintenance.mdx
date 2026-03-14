@@ -25,6 +25,28 @@ import { Card, CardGrid, Badge, Steps, LinkButton, FileTree } from '@astrojs/sta
 
 import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTinymlComments.astro';
 
+```text
+  Anomaly Detection vs Classification
+  ──────────────────────────────────────────
+  Classification (supervised):
+  Train: examples of EACH class needed
+  ┌────────┐  ┌────────┐  ┌────────┐
+  │ Normal │  │Bearing │  │Imbal-  │
+  │ 500    │  │ fault  │  │ ance   │
+  │samples │  │ 50 samp│  │ 30 samp│
+  └────────┘  └────────┘  └────────┘
+  Problem: hard to collect failure data
+
+  Anomaly Detection (unsupervised):
+  Train: ONLY normal data needed
+  ┌──────────────────────────┐
+  │ Normal operation         │
+  │ 500+ samples             │
+  │ (easy to collect)        │
+  └──────────────────────────┘
+  Anything that deviates = anomaly
+```
+
 Classification models need labeled examples of every category, but in predictive maintenance you rarely have enough failure data to train a classifier. Machines fail in unpredictable ways, and collecting labeled fault samples is expensive or dangerous. Anomaly detection sidesteps this problem: you train a model on normal operation only, and any significant deviation triggers an alert. This lesson builds that system with a vibration sensor on a motor, an autoencoder trained on healthy data, and an ESP32 running inference continuously. #AnomalyDetection #PredictiveMaintenance #TinyML
 
 ## What We Are Building
@@ -56,6 +78,28 @@ An ESP32 with an MPU6050 accelerometer mounted on a small DC motor (or fan). Dur
 | M1 | Small DC motor or PC fan | 1 | For generating vibration |
 | | Hot glue or double-sided tape | 1 | Mount MPU6050 to motor housing |
 | | Breadboard + jumper wires | 1 set | |
+
+```text
+  Autoencoder Architecture
+  ──────────────────────────────────────────
+  Input (300)            Output (300)
+  vibration ──►          ──► reconstructed
+  window       Encoder        Decoder
+               ──────         ──────
+  [300] ──► [64] ──► [16] ──► [64] ──► [300]
+              compress   bottleneck   expand
+
+  Normal: input ~= output (low MSE)
+  Anomaly: input != output (high MSE)
+
+  ┌────────────────────────────────────┐
+  │      MSE Distribution              │
+  │  Normal:  ████████░░  (low error)  │
+  │  Anomaly: ░░░░░░░░████ (high err)  │
+  │                   ▲                │
+  │             threshold              │
+  └────────────────────────────────────┘
+```
 
 ## Anomaly Detection vs Classification
 

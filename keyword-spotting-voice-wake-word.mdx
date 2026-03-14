@@ -56,10 +56,53 @@ A voice-activated trigger that listens for the keyword "yes" (from Google's Spee
 | M1 | INMP441 I2S MEMS microphone breakout | 1 | I2S output, 3.3V compatible |
 | | Breadboard + jumper wires | 1 set | |
 
+```text
+  Audio Feature Extraction Pipeline
+  ──────────────────────────────────────────
+  INMP441 Mic    Framing        MFCC
+  (16 kHz) ──►  32ms windows ──► 13 coefficients
+                16ms hop          per frame
+                                     │
+                                     ▼
+                              ┌──────────────┐
+                              │ Spectrogram  │
+                              │ 62 frames x  │
+                              │ 13 MFCCs     │
+                              │ = 806 values │
+                              └──────┬───────┘
+                                     │
+                                     ▼
+                              ┌──────────────┐
+                              │ CNN (Conv1D) │
+                              │ ~20 KB int8  │
+                              └──────┬───────┘
+                                     │
+                            ┌────────┼────────┐
+                            ▼        ▼        ▼
+                          "yes"   "no"   "unknown"
+```
+
 ## Audio ML on Microcontrollers
 
 <InArticleAd />
 
+
+```text
+  Sliding Window Detection Loop
+  ──────────────────────────────────────────
+  Audio stream (continuous):
+  ──────────────────────────────────────►
+  │    1s window    │
+  ├─────────────────┤
+       │    1s window    │  (hop = 500ms)
+       ├─────────────────┤
+            │    1s window    │
+            ├─────────────────┤
+
+  Each window: extract MFCCs ──► classify
+  If P("yes") > 0.85 for 2 consecutive
+  windows ──► DETECTED (reduces false alarms)
+```
 
 Speech and audio classification on MCUs follows a consistent pipeline. Raw audio samples come in from a digital microphone. A feature extraction stage converts the time-domain waveform into a compact spectral representation (typically MFCCs or log-mel spectrograms). A small neural network classifies the feature matrix into one of several categories. The entire pipeline must complete within the audio window duration to maintain real-time operation.
 

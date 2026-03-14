@@ -44,6 +44,25 @@ A single float32 multiply-accumulate (MAC) on a Cortex-M4 without FPU takes 10 t
 
 The 4x reduction in model size is guaranteed by the math (4 bytes to 1 byte per value). The 2x to 4x speedup depends on whether optimized int8 kernels are available for your platform.
 
+```text
+  Float32 vs Int8 Model Comparison
+  ──────────────────────────────────────────
+                Float32        Int8
+  ────────────  ──────────     ──────────
+  Model size:   32 KB          8 KB
+  RAM usage:    16 KB          4 KB
+  Inference:    12 ms          3 ms
+  Accuracy:     96.2%          95.8%
+
+  ┌────────┐    Quantize     ┌────────┐
+  │ 0.347  │  ──────────►   │  44    │
+  │-0.128  │   scale=0.008  │ -16    │
+  │ 1.024  │   zp=0         │ 128    │
+  └────────┘                 └────────┘
+   4 bytes                    1 byte
+   per value                  per value
+```
+
 ### How Quantization Works
 
 Quantization maps a floating-point range to an integer range using two parameters: **scale** and **zero point**.
@@ -56,6 +75,25 @@ int8_value  = round(float_value / scale) + zero_point
 For int8, the range is [-128, 127]. The scale and zero point are chosen per-tensor (or per-channel for weights) to minimize quantization error. The TFLite converter computes these parameters automatically using a representative dataset.
 
 <Card title="Representative Dataset" icon="star">
+```text
+  PTQ vs QAT Comparison
+  ──────────────────────────────────────────
+  Post-Training Quantization (PTQ):
+  Train (float32) ──► Quantize ──► Deploy
+                      (offline)
+  + Fast, no retraining
+  - May lose 1-3% accuracy
+
+  Quantization-Aware Training (QAT):
+  Train (float32)
+    │ insert fake quantize nodes
+    ▼
+  Fine-tune (simulated int8) ──► Deploy
+  + Model learns to tolerate quantization
+  + Typically < 0.5% accuracy loss
+  - Requires retraining (extra compute)
+```
+
 The representative dataset is a small batch of real input data (100 to 500 samples) that the converter uses to observe the actual range of activations at each layer. Without it, the converter cannot determine the correct scale and zero point for activation tensors. Weight tensors can be quantized without a representative dataset because their values are known after training.
 </Card>
 
