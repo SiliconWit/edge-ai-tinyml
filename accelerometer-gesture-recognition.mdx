@@ -49,8 +49,8 @@ A wearable or handheld device that recognizes four gestures (shake, tilt, tap, c
 
 | Ref | Component | Quantity | Notes |
 |-----|-----------|----------|-------|
-| U1 | RPi Pico W | 1 | Reuse from Pico course |
-| U2 | STM32F4 dev board (e.g., Nucleo-F446RE) | 1 | Reuse from STM32 course |
+| U1 | RPi Pico W | 1 | Reuse from [Pico course](/education/embedded-programming-rpi-pico/) |
+| U2 | STM32F4 dev board (e.g., Nucleo-F446RE) | 1 | Reuse from [STM32 course](/education/embedded-programming-stm32/) |
 | S1 | MPU6050 breakout module | 1 | I2C, 3.3V compatible |
 | | RGB LED or 3 discrete LEDs | 1 | For gesture feedback |
 | | Breadboard + jumper wires | 1 set | |
@@ -1064,7 +1064,7 @@ def publish_gesture(gesture_name, confidence):
     print(f"Published: {payload}")
 ```
 
-For the C firmware (ESP32 or Pico W with lwIP), the MQTT publish follows the same pattern shown in the IoT Systems course. The key point is that you only transmit a small JSON payload (the gesture label and confidence) rather than the raw sensor data, which is exactly the bandwidth advantage of edge inference.
+For the C firmware (ESP32 or Pico W with lwIP), the MQTT publish follows the same pattern shown in the [IoT Systems course](/education/iot-systems/). The key point is that you only transmit a small JSON payload (the gesture label and confidence) rather than the raw sensor data, which is exactly the bandwidth advantage of edge inference.
 
 ## Comparison: Pico vs STM32 Inference Performance
 

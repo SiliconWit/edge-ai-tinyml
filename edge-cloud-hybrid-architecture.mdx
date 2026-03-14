@@ -44,7 +44,7 @@ An ESP32 running the autoencoder from Lesson 7 (anomaly detection on motor vibra
 | Escalation trigger | MSE in ambiguous zone between `low_threshold` and `high_threshold` |
 | OTA transport | HTTP GET for `.tflite` file |
 | Telemetry | MQTT (topics under `edge-ai/device/{id}/`) |
-| Dashboard | Grafana or SiliconWit.io (covered in IoT Systems course) |
+| Dashboard | Grafana or SiliconWit.io (covered in [IoT Systems course](/education/iot-systems/)) |
 
 ### Bill of Materials
 
@@ -1028,7 +1028,7 @@ After running this script, the new `model.tflite` is immediately available at th
 <InArticleAd />
 
 
-The ESP32 publishes all decisions, escalations, and system health to MQTT topics. This integrates directly with the MQTT broker and Grafana dashboards covered in the IoT Systems course.
+The ESP32 publishes all decisions, escalations, and system health to MQTT topics. This integrates directly with the MQTT broker and Grafana dashboards covered in the [IoT Systems course](/education/iot-systems/).
 
 ### Topic Hierarchy
 
@@ -1211,7 +1211,7 @@ void publish_ota_event(uint32_t old_version, uint32_t new_version,
 }
 ```
 
-If you completed the IoT Systems course, you can point Grafana at these MQTT topics (via an InfluxDB or TimescaleDB bridge) to visualize inference rates, escalation frequency, model version transitions, and device health over time. The SiliconWit.io dashboard also supports direct MQTT subscription for real-time monitoring.
+If you completed the [IoT Systems course](/education/iot-systems/), you can point Grafana at these MQTT topics (via an InfluxDB or TimescaleDB bridge) to visualize inference rates, escalation frequency, model version transitions, and device health over time. The SiliconWit.io dashboard also supports direct MQTT subscription for real-time monitoring.
 
 ## Federated Learning Concepts
 
