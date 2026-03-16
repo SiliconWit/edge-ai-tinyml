@@ -45,7 +45,7 @@ import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTi
      Same .tflite, different platform code
 ```
 
-Gesture recognition turns an inexpensive accelerometer into an intuitive input device. Instead of buttons or touchscreens, the user shakes, tilts, taps, or draws a circle in the air, and the microcontroller classifies the motion in real time. This lesson walks through the full pipeline: collecting labeled IMU data, training a small neural network, deploying TFLite Micro models on both the RPi Pico and STM32, and comparing the two platforms side by side. #GestureRecognition #TinyML #EmbeddedML
+Buttons wear out, touchscreens add cost and complexity, and neither works well when the user is wearing gloves or the device is sealed inside an enclosure. An accelerometer costs under a dollar, has no moving parts, and can distinguish dozens of distinct gestures with a small neural network running entirely on the MCU. This lesson walks through the full pipeline: collecting labeled IMU data from an MPU6050, training a gesture classifier in TensorFlow, deploying TFLite Micro models on both the RPi Pico and STM32, and comparing inference latency, memory footprint, and power consumption across both platforms. #GestureRecognition #TinyML #EmbeddedML
 
 ## What We Are Building
 
