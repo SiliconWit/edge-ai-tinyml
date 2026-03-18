@@ -104,6 +104,17 @@ A voice-activated trigger that listens for the keyword "yes" (from Google's Spee
   windows ──► DETECTED (reduces false alarms)
 ```
 
+```mermaid
+flowchart LR
+    A[Mic captures\n16 kHz audio] --> B[Frame into\n32 ms windows]
+    B --> C[Extract MFCCs\n13 coefficients/frame]
+    C --> D[Build spectrogram\n62 frames x 13]
+    D --> E[CNN classifies\nyes / no / unknown]
+    E --> F{Confidence\nabove 0.85?}
+    F -- 2 consecutive --> G[DETECTED]
+    F -- No --> A
+```
+
 Speech and audio classification on MCUs follows a consistent pipeline. Raw audio samples come in from a digital microphone. A feature extraction stage converts the time-domain waveform into a compact spectral representation (typically MFCCs or log-mel spectrograms). A small neural network classifies the feature matrix into one of several categories. The entire pipeline must complete within the audio window duration to maintain real-time operation.
 
 The key constraints on an ESP32:

@@ -111,6 +111,23 @@ An ESP32 running the autoencoder from Lesson 7 (anomaly detection on motor vibra
                MQTT Dashboard
 ```
 
+```mermaid
+flowchart TD
+    A[Sensor Data] --> B[Edge Model\n12 KB on ESP32]
+    B --> C{MSE threshold?}
+    C -- MSE below low --> D[NORMAL\nlocal decision]
+    C -- MSE above high --> E[ANOMALY\nlocal decision]
+    C -- MSE in between --> F[UNCERTAIN\nescalate to cloud]
+    F --> G[Cloud Model\n200 KB, definitive answer]
+    G --> H[Accumulate escalated data]
+    H --> I[Retrain edge model]
+    I --> J[OTA push new .tflite]
+    J --> B
+    D --> K[MQTT Dashboard]
+    E --> K
+    G --> K
+```
+
 ## Architecture Overview
 
 <InArticleAd />

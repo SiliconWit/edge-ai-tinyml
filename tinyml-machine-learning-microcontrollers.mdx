@@ -104,6 +104,16 @@ Before writing any code, internalize the resource budget of common TinyML target
 <InArticleAd />
 
 
+```mermaid
+flowchart LR
+    A[1. Collect\ntraining data] --> B[2. Train model\nTensorFlow]
+    B --> C[3. Convert to\n.tflite + int8]
+    C --> D[4. Convert to\nC array]
+    D --> E[5. Write\nfirmware + TFLM]
+    E --> F[6. Flash, run,\nevaluate]
+    F -->|accuracy too low?| B
+```
+
 <Steps>
 1. **Collect or generate training data.**
    For this lesson we generate synthetic sine wave data. In later lessons you will collect real sensor data.

@@ -25,6 +25,8 @@ import { Card, CardGrid, Badge, Steps, LinkButton, FileTree } from '@astrojs/sta
 
 import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTinymlComments.astro';
 
+Classification models need labeled examples of every category, but in predictive maintenance you rarely have enough failure data to train a classifier. Machines fail in unpredictable ways, and collecting labeled fault samples is expensive or dangerous. Anomaly detection sidesteps this problem: you train a model on normal operation only, and any significant deviation triggers an alert. This lesson builds that system with a vibration sensor on a motor, an autoencoder trained on healthy data, and an ESP32 running inference continuously. #AnomalyDetection #PredictiveMaintenance #TinyML
+
 ```text
   Anomaly Detection vs Classification
   ──────────────────────────────────────────
@@ -46,8 +48,6 @@ import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTi
   └──────────────────────────┘
   Anything that deviates = anomaly
 ```
-
-Classification models need labeled examples of every category, but in predictive maintenance you rarely have enough failure data to train a classifier. Machines fail in unpredictable ways, and collecting labeled fault samples is expensive or dangerous. Anomaly detection sidesteps this problem: you train a model on normal operation only, and any significant deviation triggers an alert. This lesson builds that system with a vibration sensor on a motor, an autoencoder trained on healthy data, and an ESP32 running inference continuously. #AnomalyDetection #PredictiveMaintenance #TinyML
 
 ## What We Are Building
 

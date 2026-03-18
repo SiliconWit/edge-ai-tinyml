@@ -748,6 +748,21 @@ Unstructured pruning does not reduce inference time on TFLM because the runtime 
 <InArticleAd />
 
 
+```mermaid
+flowchart TD
+    A[Float32 model] --> B{Small enough?\nunder 50 KB, under 10 ms}
+    B -- Yes --> C[Apply PTQ and deploy]
+    B -- No --> D{PTQ accuracy OK?\nless than 2% drop}
+    D -- Yes --> C
+    D -- No --> E[Apply QAT\nfine-tune 20-30 epochs]
+    E --> F{Still too large\nfor flash?}
+    F -- Yes --> G[Reduce architecture\nfewer layers/filters, retrain]
+    G --> B
+    F -- No --> H{Need OTA\ncompression?}
+    H -- Yes --> I[Prune before quantize\nthen gzip/zstd]
+    H -- No --> J[Deploy]
+```
+
 <Steps>
 1. **Is the float32 model already small enough?** (Under 50 KB, inference under 10 ms.) If yes, apply PTQ and deploy. You are done.
 

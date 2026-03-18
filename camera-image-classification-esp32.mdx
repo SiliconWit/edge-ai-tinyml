@@ -25,31 +25,31 @@ import { Card, CardGrid, Badge, Steps, LinkButton, FileTree } from '@astrojs/sta
 
 import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTinymlComments.astro';
 
+Image classification is the most demanding TinyML task you can run on a microcontroller. A single 96x96 grayscale image is 9,216 bytes. A 96x96 RGB image is 27,648 bytes. The model weights, intermediate activations, and the image buffer all compete for the same limited RAM. The ESP32-CAM module solves part of this problem with 4 MB of PSRAM, but you still need careful memory management to make everything fit. This capstone lesson puts together everything from the course: model training, quantization, TFLM deployment, and real-time embedded application logic, all applied to the hardest modality. #ComputerVision #TinyML #ESP32CAM
+
 ```text
   ESP32-CAM Memory Layout
   ──────────────────────────────────────────
   Internal SRAM (~520 KB)
-  ┌─────────────────────────────────────┐
-  │ FreeRTOS heap + task stacks  200 KB │
-  │ TFLM interpreter + ops       50 KB │
-  │ Tensor arena                100 KB │
-  │ Misc (WiFi, drivers)        170 KB │
-  └─────────────────────────────────────┘
+  ┌──────────────────────────────────────┐
+  │ FreeRTOS heap + task stacks   200 KB │
+  │ TFLM interpreter + ops         50 KB │
+  │ Tensor arena                  100 KB │
+  │ Misc (WiFi, drivers)          170 KB │
+  └──────────────────────────────────────┘
 
   PSRAM (4 MB, SPI-connected)
-  ┌─────────────────────────────────────┐
-  │ Camera frame buffer (QVGA) 150 KB  │
-  │ Resized input (96x96)        9 KB  │
-  │ Model weights (flash-mapped)250 KB │
-  │ Available                  ~3.5 MB │
-  └─────────────────────────────────────┘
+  ┌──────────────────────────────────────┐
+  │ Camera frame buffer (QVGA)    150 KB │
+  │ Resized input (96x96)           9 KB │
+  │ Model weights (flash-mapped)  250 KB │
+  │ Available                    ~3.5 MB │
+  └──────────────────────────────────────┘
 
   Key: tensor arena MUST be in internal
   SRAM for speed. Image buffers can use
   PSRAM (slower but larger).
 ```
-
-Image classification is the most demanding TinyML task you can run on a microcontroller. A single 96x96 grayscale image is 9,216 bytes. A 96x96 RGB image is 27,648 bytes. The model weights, intermediate activations, and the image buffer all compete for the same limited RAM. The ESP32-CAM module solves part of this problem with 4 MB of PSRAM, but you still need careful memory management to make everything fit. This capstone lesson puts together everything from the course: model training, quantization, TFLM deployment, and real-time embedded application logic, all applied to the hardest modality. #ComputerVision #TinyML #ESP32CAM
 
 ## What We Are Building
 

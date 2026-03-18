@@ -25,6 +25,8 @@ import { Card, CardGrid, Badge, Steps, LinkButton, FileTree } from '@astrojs/sta
 
 import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTinymlComments.astro';
 
+Real sensor data is messy. Collecting it, labeling it, extracting useful features, and iterating on models by hand is tedious and error prone. Edge Impulse is a cloud platform that handles the entire pipeline from raw sensor data to a deployable C++ library. In this lesson you will collect accelerometer data from an MPU6050 connected to an ESP32, upload it to Edge Impulse, train a motion classifier that distinguishes between idle, walking, and running, and deploy the quantized model back to the ESP32 for real-time inference. #EdgeImpulse #TinyML #MotionClassifier
+
 ```text
   Edge Impulse Workflow
   ──────────────────────────────────────────
@@ -45,8 +47,6 @@ import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTi
               ▼
          ESP32 firmware (inference)
 ```
-
-Real sensor data is messy. Collecting it, labeling it, extracting useful features, and iterating on models by hand is tedious and error prone. Edge Impulse is a cloud platform that handles the entire pipeline from raw sensor data to a deployable C++ library. In this lesson you will collect accelerometer data from an MPU6050 connected to an ESP32, upload it to Edge Impulse, train a motion classifier that distinguishes between idle, walking, and running, and deploy the quantized model back to the ESP32 for real-time inference. #EdgeImpulse #TinyML #MotionClassifier
 
 ## What We Are Building
 
@@ -112,6 +112,18 @@ A wearable-style motion classifier that reads 3-axis accelerometer data from an 
 
 
 Edge Impulse provides a web-based pipeline with these stages:
+
+```mermaid
+flowchart TD
+    A[1. Data Acquisition\nupload CSV or stream live] --> B[2. Impulse Design\nwindow size, features, learning block]
+    B --> C[3. Feature Extraction\nFFT, spectral power, stats]
+    C --> D[4. Training\nNN classifier on features]
+    D --> E[5. Testing\nconfusion matrix on held-out set]
+    E --> F{Accuracy OK?}
+    F -- No --> G[Adjust architecture\nor collect more data]
+    G --> A
+    F -- Yes --> H[6. Deployment\nexport C++ / Arduino library]
+```
 
 <Steps>
 1. **Data Acquisition.**
