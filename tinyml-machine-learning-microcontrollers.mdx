@@ -105,7 +105,7 @@ Before writing any code, internalize the resource budget of common TinyML target
 
 
 ```mermaid
-flowchart LR
+flowchart TD
     A[1. Collect\ntraining data] --> B[2. Train model\nTensorFlow]
     B --> C[3. Convert to\n.tflite + int8]
     C --> D[4. Convert to\nC array]

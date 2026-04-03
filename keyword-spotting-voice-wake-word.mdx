@@ -105,7 +105,7 @@ A voice-activated trigger that listens for the keyword "yes" (from Google's Spee
 ```
 
 ```mermaid
-flowchart LR
+flowchart TD
     A[Mic captures\n16 kHz audio] --> B[Frame into\n32 ms windows]
     B --> C[Extract MFCCs\n13 coefficients/frame]
     C --> D[Build spectrogram\n62 frames x 13]
