@@ -25,7 +25,11 @@ import { Card, CardGrid, Badge, Steps, LinkButton, FileTree } from '@astrojs/sta
 
 import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTinymlComments.astro';
 
+import PodcastEmbed from '../../../../components/PodcastEmbed.astro';
+
 Sending raw sensor data to the cloud for inference adds latency, costs bandwidth, and fails the moment the network goes down. For applications like keyword detection, gesture recognition, or anomaly alerts, even a few hundred milliseconds of round-trip delay can make the system unusable. Running the model directly on the microcontroller eliminates all three problems: inference happens in microseconds, no network is needed, and the data never leaves the device. In this first lesson you will walk through the complete TinyML pipeline: train a sine wave regression model in TensorFlow on your PC, quantize it to int8, convert it to a C array, and deploy it on an ESP32 using TensorFlow Lite for Microcontrollers. By the end you will see predictions printed over serial and measure how fast inference runs on a 240 MHz core. #TinyML #EdgeAI #ESP32
+
+<PodcastEmbed src="https://open.spotify.com/episode/3uKvHkqdawlJvfU1raLvil?si=MFubSDDURoKfzSWQ-6O0zg" />
 
 ## What is TinyML?
 
