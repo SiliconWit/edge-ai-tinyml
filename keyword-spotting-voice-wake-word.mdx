@@ -1148,6 +1148,10 @@ dependencies:
    The onboard LED lights up for 1 second after two consecutive detections.
 </Steps>
 
+:::tip[Instrument it]
+The same wake-word pipeline is how a machine listens to itself. A failing bearing, a cavitating pump, a leaking valve, and an arcing contact each have an acoustic signature, and a tiny model on a microphone can learn to spot it just like a keyword. Mount the [microphone](/education/sensor-actuator-interfacing-stm32/) close to the source and shielded from wind and handling noise, classify on-device so only the detection leaves, and the machine can [call out its own faults](https://siliconwit.io) by the sound it makes.
+:::
+
 ## Exercises
 
 <InArticleAd />

@@ -779,6 +779,10 @@ flowchart TD
 5. **Need further compression for storage (OTA updates)?** Apply pruning before quantization, then compress the .tflite with gzip/zstd.
 </Steps>
 
+:::tip[Instrument it]
+Quantization is what lets a real monitor exist at all. A model that runs in int8 in a few kilobytes is one you can put on a 3-dollar microcontroller bolted next to the sensor, running on a coin cell, instead of a Raspberry Pi that needs mains power. That is the whole promise of monitoring at the edge: cheap enough to deploy on every machine, small enough to sip power, and private enough that only the [detection leaves the device](/education/iot-systems/), never the raw stream.
+:::
+
 ## Exercises
 
 <InArticleAd />

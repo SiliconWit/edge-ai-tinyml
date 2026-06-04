@@ -802,6 +802,10 @@ When moving a TFLM application from one MCU to another, only these pieces change
 
 The TFLM code itself is fully portable. This is by design. The "micro" in TFLite Micro means it has no OS dependencies, no dynamic allocation, and no file I/O. You bring the platform layer; TFLM brings the inference engine.
 
+:::tip[Instrument it]
+Deployment is the step that moves the detector from your laptop to the device that actually touches the machine. The model now runs on the [MCU wired to the sensor](/education/sensor-actuator-interfacing-stm32/), reading the same signal it trained on and deciding in milliseconds whether something is wrong. Match the input scaling and sample rate to training exactly, and the device becomes a self-contained monitor that [reports a verdict](/education/iot-systems/), not a data dump, on whatever it is bolted to.
+:::
+
 ## Exercises
 
 <InArticleAd />

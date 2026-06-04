@@ -59,6 +59,10 @@ Classification models need labeled examples of every category, but in predictive
 An ESP32 with an MPU6050 accelerometer mounted on a small DC motor (or fan). During a training phase, the device collects vibration data while the motor runs normally. A Python script on the PC trains an autoencoder that learns to reconstruct normal vibration patterns. After quantization and deployment, the ESP32 monitors vibration continuously. When the reconstruction error exceeds a threshold (indicating abnormal vibration from bearing wear, imbalance, or misalignment), the device triggers an LED alert and publishes an MQTT message.
 </Card>
 
+:::tip[Instrument it]
+This is predictive maintenance in miniature, and it works only because the sensor is in the right place. Mount the accelerometer rigidly on the bearing housing, in the load zone, aligned with the axis the fault shakes (the [industrial deployment notes](#practical-considerations-for-industrial-deployment) below cover studs and epoxy). The [ESP32 reading the MPU6050](/education/sensor-actuator-interfacing-stm32/) runs the model on-device and raises an [alert only when the pattern changes](https://siliconwit.io), so a motor warns you before a bearing seizes.
+:::
+
 **Project specifications:**
 
 | Parameter | Value |
