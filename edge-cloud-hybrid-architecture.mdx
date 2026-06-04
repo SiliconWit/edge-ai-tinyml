@@ -1374,6 +1374,10 @@ Choosing between pure edge, hybrid, or pure cloud inference depends on your appl
 
 **Pure cloud** is the right choice when the model is too large or complex for any MCU, when connectivity is reliable and always available, when centralized logging and compliance require that all data pass through a server, or when the inference task changes frequently and deploying updates to edge devices is impractical.
 
+:::tip[Instrument it]
+This is the architecture question every real monitor faces: what does the device decide on its own, and what does it send up? Detect at the edge and you ship an event ("bearing anomaly at 14:02") instead of a continuous vibration stream, which saves bandwidth, battery, and cloud cost while still letting a [dashboard and alerts](https://siliconwit.io) act on it. Keep raw data local for the rare deep look, and push the conclusions and the exceptions. That split is what makes monitoring scale past a handful of devices.
+:::
+
 ## Exercises
 
 <InArticleAd />

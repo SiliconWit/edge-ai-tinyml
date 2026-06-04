@@ -1140,6 +1140,10 @@ Key observations:
 
 4. **Power consumption is lower on the Pico** due to its lower clock speed and simpler core architecture. For battery-powered wearables, this matters.
 
+:::tip[Instrument it]
+Gesture and motion models live or die by where the accelerometer sits. Mount it rigidly to the thing that actually moves, aligned so the axis you care about sees the motion cleanly, and keep that orientation identical between training and deployment, since a model trained with the chip one way fails when it is rotated. The same discipline turns this from a gesture demo into machine-motion monitoring: an IMU on a pump or a door learning what normal looks like, and [flagging what is not](https://siliconwit.io).
+:::
+
 ## Exercises
 
 <InArticleAd />
