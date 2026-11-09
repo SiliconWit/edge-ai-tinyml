@@ -27,35 +27,23 @@ import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTi
 
 import PodcastEmbed from '../../../../components/PodcastEmbed.astro';
 
-Real sensor data is messy. Collecting it, labeling it, extracting useful features, and iterating on models by hand is tedious and error prone. Edge Impulse is a cloud platform that handles the entire pipeline from raw sensor data to a deployable C++ library. In this lesson you will collect accelerometer data from an MPU6050 connected to an ESP32, upload it to Edge Impulse, train a motion classifier that distinguishes between idle, walking, and running, and deploy the quantized model back to the ESP32 for real-time inference. #EdgeImpulse #TinyML #MotionClassifier
+A model for real sensor data usually fails for ordinary reasons: too few recordings, wrong labels, a sensor mounted differently each day. Doing every step by hand is slow, and each step can go wrong. Edge Impulse is a cloud service that manages the steps. It stores and labels your recordings, reduces each one to features (a few numbers that describe it), trains a model on the features, and gives you a C++ library for your firmware. In this lesson you record motion with an MPU6050 accelerometer on an ESP32 and train a classifier, a model that chooses one label from a fixed list. It tells idle, walking and running apart, and it runs on the ESP32. #EdgeImpulse #TinyML #MotionClassifier
 
 <PodcastEmbed src="https://open.spotify.com/episode/1r0qx9g7bvBWfXmURITiOV?si=rM2ylHnwT6G_DmLP2R7tiQ" />
 
 ```text
-  Edge Impulse Workflow
-  ──────────────────────────────────────────
-  ESP32 + MPU6050
-    │
-    │ Serial forwarder
-    ▼
-  Edge Impulse Studio (cloud)
-    │
-    ├──► 1. Data Collection (label samples)
-    ├──► 2. Impulse Design
-    │       ├── Spectral Features (FFT)
-    │       └── Neural Network Classifier
-    ├──► 3. Train Model (cloud GPU)
-    ├──► 4. Test on held-out data
-    └──► 5. Deploy as C++ Library
-              │
-              ▼
-         ESP32 firmware (inference)
+  ESP32 + MPU6050 ──CSV files──► Edge Impulse Studio
+   (records motion)              (cloud: label, extract
+                                  features, train, test)
+                                         │
+  ESP32 firmware  ◄──C++ library─────────┘
+   (inference, no network)
 ```
 
 ## What We Are Building
 
 <Card title="Motion Classifier" icon="star">
-A wearable-style motion classifier that reads 3-axis accelerometer data from an MPU6050 at 50 Hz and classifies the current activity as idle, walking, or running. The classifier runs entirely on the ESP32 with no cloud connectivity required after deployment. An LED indicates the current state: off for idle, slow blink for walking, fast blink for running.
+A motion classifier of the kind used in a wearable device. It reads the three axes of an MPU6050 accelerometer 50 times a second and labels the activity as idle, walking, or running. After you flash it, the classifier runs on the ESP32 with no network. An LED shows the result: off for idle, slow blink for walking, fast blink for running.
 </Card>
 
 **Project specifications:**
@@ -80,9 +68,9 @@ A wearable-style motion classifier that reads 3-axis accelerometer data from an 
 | R1 | 220 ohm resistor | 1 | Current limiting for LED |
 | | Breadboard + jumper wires | 1 set | |
 
+Edge Impulse calls the chain from raw data to answer an impulse. In this project a window of raw samples is reduced to about 33 features, and the model sees only those:
+
 ```text
-  Impulse Design (Edge Impulse)
-  ──────────────────────────────────────────
   Raw Data         Processing      Learning
   ─────────        ──────────      ────────
   ┌──────────┐    ┌──────────┐   ┌────────┐
@@ -115,38 +103,26 @@ A wearable-style motion classifier that reads 3-axis accelerometer data from an 
 <InArticleAd />
 
 
-Edge Impulse provides a web-based pipeline with these stages:
-
-```mermaid
-flowchart TD
-    A[1. Data Acquisition\nupload CSV or stream live] --> B[2. Impulse Design\nwindow size, features, learning block]
-    B --> C[3. Feature Extraction\nFFT, spectral power, stats]
-    C --> D[4. Training\nNN classifier on features]
-    D --> E[5. Testing\nconfusion matrix on held-out set]
-    E --> F{Accuracy OK?}
-    F -- No --> G[Adjust architecture\nor collect more data]
-    G --> A
-    F -- Yes --> H[6. Deployment\nexport C++ / Arduino library]
-```
+Edge Impulse Studio is a web application with six stages. If the accuracy in stage 5 is too low, you return to stage 1 or 2.
 
 <Steps>
 1. **Data Acquisition.**
-   Upload sensor data as CSV or stream it live via the Edge Impulse CLI. Each sample is labeled with its class.
+   Upload sensor data as CSV files or stream them with the Edge Impulse CLI (command-line tool). Each recording carries a label, the name of its class.
 
 2. **Impulse Design.**
-   Define the processing pipeline: input axes, window size, feature extraction block (spectral analysis, MFE, raw), and learning block (classification NN, anomaly detection).
+   Choose the input axes, the window size, the processing block that extracts features, and the learning block that holds the model.
 
 3. **Feature Extraction.**
-   The platform computes features (FFT peaks, spectral power, statistical moments) for each window and visualizes them in a 2D feature explorer.
+   The platform computes the features of each window and plots them, so you see whether the classes form separate groups.
 
 4. **Training.**
-   A neural network classifier trains on the extracted features. You control the architecture (number of layers, neurons, dropout) and training parameters (epochs, learning rate).
+   A neural network classifier is trained on the features. You choose its size and how long it trains.
 
 5. **Testing.**
-   The platform evaluates accuracy on a held-out test set and shows the confusion matrix.
+   The platform measures accuracy on recordings kept out of training and shows a confusion matrix, a table of true class against predicted class.
 
 6. **Deployment.**
-   Export a quantized model as a C++ library, Arduino library, or WebAssembly. The C++ library drops directly into an ESP-IDF project.
+   Export the quantized model (its numbers stored in 8 bits) as a C++ library, Arduino library, or WebAssembly. The C++ library becomes a component of an ESP-IDF project.
 </Steps>
 
 Create a free account at [edgeimpulse.com](https://edgeimpulse.com) and create a new project called "Motion Classifier".
@@ -156,7 +132,7 @@ Create a free account at [edgeimpulse.com](https://edgeimpulse.com) and create a
 <InArticleAd />
 
 
-The first task is to write firmware that reads the MPU6050 at 50 Hz and outputs the data in a format that Edge Impulse can ingest.
+The first task is firmware that reads the MPU6050 at 50 Hz and prints the data as CSV text, a format that Edge Impulse accepts.
 
 <Tabs>
 <TabItem label="MicroPython (Data Collection)">
@@ -215,7 +191,7 @@ start_time = time.ticks_ms()
 num_samples = SAMPLE_RATE_HZ * DURATION_S
 
 for i in range(num_samples):
-    target_time = start_time + (i * SAMPLE_INTERVAL_MS)
+    target_time = start_time + ((i + 1) * SAMPLE_INTERVAL_MS)
     ax, ay, az = read_accel()
     ts = time.ticks_diff(time.ticks_ms(), start_time)
     print(f"{ts},{ax:.4f},{ay:.4f},{az:.4f}")
@@ -336,21 +312,21 @@ void app_main(void) {
 <InArticleAd />
 
 
-You need at least 3 minutes of data per class. For three classes (idle, walking, running), plan to collect about 10 minutes total.
+You need at least 3 minutes of data per class. For three classes (idle, walking, running), plan to collect about 10 minutes total. The model learns only from what you record, so record the way the device will be used: more than one person if you can, several speeds, the final mounting.
 
 <Steps>
 1. **Flash the data collection firmware** to your ESP32.
 
-2. **Collect idle data.** Place the ESP32 + MPU6050 on a flat table. Start recording. Save the serial output to a file: `idle_01.csv`, `idle_02.csv`, etc. Collect at least 6 recordings of 10 seconds each.
+2. **Collect idle data.** Place the ESP32 + MPU6050 on a flat table. Start recording. Save the serial output to a file: `idle_01.csv`, `idle_02.csv`, etc. Collect at least 18 recordings of 10 seconds each ($18 \times 10\,\text{s} = 180\,\text{s} = 3$ minutes).
 
 3. **Collect walking data.** Hold the sensor board in your hand (or strap it to your wrist/ankle) and walk at a normal pace. Save as `walking_01.csv`, etc.
 
 4. **Collect running data.** Same setup, but jog or run. Save as `running_01.csv`, etc.
 
-5. **Capture serial output to files** using a terminal tool (see commands below).
+5. **Check each file.** It must begin with the header line and hold about 500 rows of data.
 </Steps>
 
-Capture serial output with any of these methods:
+Save the serial output of each recording to its file with any of these methods:
 
 ```bash
 # Using screen with logging
@@ -424,17 +400,17 @@ In the Edge Impulse Studio, go to **Impulse design**.
 | Window increase | 500 ms |
 | Frequency | 50 Hz |
 
-The window size of 2 seconds (100 samples at 50 Hz) gives the model enough context to distinguish between activities. The window increase of 500 ms means the model evaluates overlapping windows during inference.
+One acceleration reading looks the same in walking and in running, so a model cannot label a single sample. It needs a stretch of time, called a window. A window of 2 seconds (100 samples at 50 Hz) holds three or more steps of a walk. The window increase of 500 ms is the distance between the starts of two windows, so the windows overlap and one 10-second recording gives 17 training windows.
 
 ### Processing Block: Spectral Analysis
 
-Select **Spectral Analysis** as the processing block. This computes frequency-domain features from each axis:
+The 300 raw numbers of a window change completely when a step begins a moment later, although the activity is the same. So the model does not see them. Select **Spectral Analysis** as the processing block. It describes each axis by numbers that do not depend on the exact timing:
 
-- FFT length, spectral power in configurable bins
-- RMS, peak-to-peak, mean, standard deviation
-- Spectral entropy and skewness
+- How strong the movement is: the RMS (root mean square, an average size of the signal).
+- Which rhythms it contains: an FFT (fast Fourier transform) splits the signal into frequencies, and the block reports the power in several bands and the strongest peaks.
+- How the values are spread, such as the skewness.
 
-These features are much more discriminative than raw time-domain samples. Walking has a characteristic frequency around 1.5 to 2 Hz. Running is faster (2.5 to 4 Hz). Idle has minimal spectral power.
+These features separate the classes well. Walking has a step rhythm near 1.5 to 2 Hz. Running is faster (2.5 to 4 Hz). Idle has almost no power at any frequency.
 
 ### Learning Block: Classification
 
@@ -448,6 +424,8 @@ Select **Classification** as the learning block.
 | Neural network architecture | 2 hidden layers, 20 and 10 neurons |
 | Dropout | 0.25 |
 
+A training cycle is one pass through the training data. The learning rate sets how far the numbers of the model move at each adjustment. Dropout switches off a random quarter of the neurons during training, so the model cannot depend on a few of them.
+
 ## Step 5: Training and Evaluating
 
 <InArticleAd />
@@ -455,11 +433,11 @@ Select **Classification** as the learning block.
 
 Click **Start training**. Training takes 1 to 3 minutes for this dataset size. After training, Edge Impulse shows:
 
-- **Accuracy** on the validation split (aim for 90%+ with clean data)
-- **Confusion matrix** showing per-class precision and recall
-- **On-device performance estimate** (inference time and RAM usage for your target MCU)
+- The accuracy on the validation split, a part of the training data kept aside (aim for 90% or more).
+- The confusion matrix. Each row is the true activity and each column is the model's answer, so correct answers lie on the diagonal.
+- An estimate of the inference time and RAM use on your MCU.
 
-A typical confusion matrix for a well-collected dataset:
+An example of a confusion matrix for a well-collected dataset:
 
 |  | Predicted Idle | Predicted Walking | Predicted Running |
 |--|----------------|-------------------|-------------------|
@@ -467,12 +445,7 @@ A typical confusion matrix for a well-collected dataset:
 | **Actual Walking** | 2% | 93% | 5% |
 | **Actual Running** | 0% | 4% | 96% |
 
-If accuracy is low, check for:
-- Mislabeled samples (review the data in the Data acquisition tab)
-- Insufficient data (add more recordings)
-- Sensor mounting inconsistency (always mount the sensor the same way)
-
-Go to **Model testing** and run the test set. This evaluates on data the model has never seen.
+Go to **Model testing** and run the test set. The model has never seen these recordings, so this is the accuracy to trust, as far as the test recordings resemble real use.
 
 ## Step 6: Exporting the C++ Library
 
@@ -482,7 +455,7 @@ Go to **Model testing** and run the test set. This evaluates on data the model h
 <Steps>
 1. Go to **Deployment** in Edge Impulse Studio.
 2. Select **C++ library**.
-3. Choose **Quantized (int8)** for optimization.
+3. Choose **Quantized (int8)**. The numbers of the model are then stored in 8 bits, which makes it smaller and faster.
 4. Click **Build**. Edge Impulse generates a `.zip` file containing the model, feature extraction code, and inference API.
 5. Download and extract the zip.
 </Steps>
@@ -573,15 +546,18 @@ static void indicate_class(const char *label) {
     if (strcmp(label, "idle") == 0) {
         gpio_set_level(LED_PIN, 0);  // LED off
     } else if (strcmp(label, "walking") == 0) {
-        // Slow blink (toggle)
+        // Slow blink: one toggle per 2-second window
         static int state = 0;
         state = !state;
         gpio_set_level(LED_PIN, state);
     } else if (strcmp(label, "running") == 0) {
-        // Fast blink (always toggle)
-        static int state2 = 0;
-        state2 = !state2;
-        gpio_set_level(LED_PIN, state2);
+        // Fast blink: three short flashes after each window
+        for (int i = 0; i < 3; i++) {
+            gpio_set_level(LED_PIN, 1);
+            vTaskDelay(pdMS_TO_TICKS(50));
+            gpio_set_level(LED_PIN, 0);
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
     }
 }
 
@@ -684,6 +660,10 @@ static void read_accel(float *ax, float *ay, float *az) {
 }
 ```
 
+The array `features` holds the 300 raw values of one window. One call to `run_classifier` extracts the spectral features and then runs the model on them.
+
+Here the answer only drives an LED. If a classifier ever switches a motor, a heater or a valve, keep every fast safety limit as a plain rule in the firmware. The answer of a model is advice for a slower decision or for a person.
+
 ## Step 8: Build and Flash
 
 <InArticleAd />
@@ -737,18 +717,22 @@ I (5270) motion_cls:   running: 0.0625
 I (5270) motion_cls: => walking (87.5%) | DSP: 12 ms, Classification: 3 ms
 ```
 
+The "Features: 300" in the log is the count of raw values in a window, before the spectral block reduces them.
+
 ### Performance on ESP32
 
 | Metric | Typical Value |
 |--------|---------------|
 | DSP (feature extraction) time | 10 to 15 ms |
 | Classification (inference) time | 2 to 5 ms |
-| Total per-window time | 12 to 20 ms |
-| Model flash usage | 15 to 40 KB |
-| RAM for inference | 8 to 20 KB |
+| Computing time for one window | 12 to 20 ms |
+| Model flash usage | 15 to 40 KB (estimate) |
+| RAM for inference | 8 to 20 KB (estimate) |
 | Overall accuracy | 90 to 97% (depends on data quality) |
 
-The DSP step (spectral feature extraction) takes longer than the neural network inference itself. This is typical for Edge Impulse models because the spectral analysis involves FFTs and statistical calculations.
+DSP (digital signal processing) is here the spectral feature extraction. It takes longer than the inference, because the network is small.
+
+The 12 to 20 ms is computing time only. The firmware first records a full window, so a new answer comes every 2 seconds. The flash and RAM values are estimates. Studio shows its own figures for your model on the Deployment page.
 
 ## Accuracy Evaluation
 
@@ -759,15 +743,15 @@ The DSP step (spectral feature extraction) takes longer than the neural network 
 
 <CardGrid>
   <Card title="Low accuracy on one class" icon="warning">
-  Check that you have enough data for that class. Edge Impulse recommends at least 3 minutes per class. Also verify that the sensor was mounted consistently across all recordings.
+  Check that the class has at least 3 minutes of data, that its labels are right, and that the sensor was mounted the same way in all recordings.
   </Card>
 
   <Card title="Confusion between walking and running" icon="warning">
-  These classes can overlap if walking speed is high or running speed is low. Collect data at clearly different speeds. You can also add a fourth class ("jogging") to create a buffer zone.
+  These classes can overlap if walking speed is high or running speed is low. Collect data at clearly different speeds. You can also add a fourth class ("jogging") between them.
   </Card>
 
   <Card title="High training accuracy, low test accuracy" icon="warning">
-  This is overfitting. Reduce the network size (fewer neurons), increase dropout, or collect more varied training data.
+  This is overfitting: the model has memorised the training recordings and not the general pattern. Reduce the network size (fewer neurons), increase dropout, or collect more varied training data.
   </Card>
 
   <Card title="Model too large for flash" icon="warning">
@@ -780,7 +764,7 @@ The DSP step (spectral feature extraction) takes longer than the neural network 
 If your initial accuracy is below 85%, try these steps in order:
 
 <Steps>
-1. **Review and clean your data.** In Edge Impulse, go to Data acquisition and listen to / inspect each sample. Remove any mislabeled or corrupted recordings.
+1. **Review and clean your data.** In Edge Impulse, go to Data acquisition and inspect each sample. Remove any mislabeled or corrupted recordings.
 
 2. **Increase training data.** Collect 5 more recordings per class with varied conditions (different walking surfaces, different sensor orientations).
 
@@ -788,11 +772,11 @@ If your initial accuracy is below 85%, try these steps in order:
 
 4. **Adjust the neural network.** Add a third hidden layer, or increase neurons to 32 and 16. Watch the estimated RAM usage to stay within the ESP32's budget.
 
-5. **Retrain and test.** Each iteration should improve accuracy by 2 to 5 percentage points.
+5. **Retrain and test.** Change one thing at a time, so that you know what helped.
 </Steps>
 
 :::tip[Instrument it]
-A model is only ever as good as the data you collect, and that is a sensor-placement and sampling problem before it is a machine-learning one. Record from the sensor mounted exactly as it will be in the field, at a sample rate that captures the phenomenon (Nyquist again), across the full range of normal conditions you expect, not just a tidy afternoon on the bench. Label honestly, and the device you deploy will [recognise the real world](https://siliconwit.io) instead of your test rig.
+A model can be no better than its data. Record with the sensor mounted exactly as it will be in the field. Sample at least twice as fast as the fastest movement you need to see. Cover the full range of normal conditions, and label honestly. The device will then [recognise real use](https://siliconwit.io), not only your test setup.
 :::
 
 ## Exercises
@@ -823,7 +807,7 @@ A model is only ever as good as the data you collect, and that is a sensor-place
 <InArticleAd />
 
 
-You have now used Edge Impulse to build a complete data-to-deployment pipeline with real sensor data. In the next lesson, you will go deeper into the TensorFlow Lite for Microcontrollers runtime. You will train a gesture classifier locally in TensorFlow (no cloud platform), convert it manually, and deploy it on both an ESP32 and an STM32 to compare cross-platform performance.
+Edge Impulse did the conversion and wrote the inference code for you. Next you do those steps yourself: you train a gesture classifier on your PC, convert it by hand, and run it on an ESP32 and an STM32.
 
 <EdgeAiTinymlComments />
 

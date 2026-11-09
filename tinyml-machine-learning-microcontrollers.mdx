@@ -27,69 +27,46 @@ import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTi
 
 import PodcastEmbed from '../../../../components/PodcastEmbed.astro';
 
-Sending raw sensor data to the cloud for inference adds latency, costs bandwidth, and fails the moment the network goes down. For applications like keyword detection, gesture recognition, or anomaly alerts, even a few hundred milliseconds of round-trip delay can make the system unusable. Running the model directly on the microcontroller eliminates all three problems: inference happens in microseconds, no network is needed, and the data never leaves the device. In this first lesson you will walk through the complete TinyML pipeline: train a sine wave regression model in TensorFlow on your PC, quantize it to int8, convert it to a C array, and deploy it on an ESP32 using TensorFlow Lite for Microcontrollers. By the end you will see predictions printed over serial and measure how fast inference runs on a 240 MHz core. #TinyML #EdgeAI #ESP32
+A sensor that sends every reading to a server and waits for the answer has three weaknesses. The answer arrives late, the link costs data and power, and when the network stops the device stops deciding. For a wake word, a gesture or a fault alert, a delay of a quarter of a second is often too long. The other way is to compute the answer in the microcontroller itself: it comes in milliseconds or less, no network is needed, and the readings never leave the site. The price is that the model must fit in the flash and RAM of the chip. This lesson takes you along the whole path once. On your PC you fit a small model to a sine wave with TensorFlow, store its numbers in 8 bits, and turn it into a C array. Then you run it on an ESP32 and measure the time of each prediction. #TinyML #EdgeAI #ESP32
 
 <PodcastEmbed src="https://open.spotify.com/episode/3uKvHkqdawlJvfU1raLvil?si=MFubSDDURoKfzSWQ-6O0zg" />
 
 ## What is TinyML?
 
-TinyML refers to running machine learning inference on microcontrollers and ultra-low-power devices. The key distinction from traditional ML is the hardware budget. A cloud GPU has gigabytes of memory and teraflops of compute. A microcontroller has kilobytes of RAM, hundreds of kilobytes of flash, and clock speeds measured in tens or hundreds of megahertz.
+A **model** is a rule with adjustable numbers. The line `y = a*x + b` is a model with two numbers, `a` and `b`. **Training** means a computer adjusts the numbers until the rule fits thousands of examples. **Inference** means using the finished rule: one new input goes in and one answer comes out. Training is heavy work for a PC. Inference is only multiplications and additions, so a microcontroller (MCU) can do it.
+
+TinyML is machine learning (ML) inference on a microcontroller. The difficulty is memory: a server has gigabytes of RAM, and a microcontroller has kilobytes.
 
 <Card title="The Core Idea" icon="star">
-Train the model on a powerful machine (your laptop, a cloud instance, Edge Impulse). Then compress and convert the trained model into a format that fits inside the MCU's flash. At runtime, a tiny interpreter loads the model, allocates a small memory arena, and executes inference on live sensor data. The result is a classification label, a regression value, or an anomaly score, produced entirely on-device.
+Train the model on a PC or a cloud service. Shrink it and convert it into a file that fits in the flash of the MCU. On the MCU, a small program called an interpreter reads the model and computes an answer from live sensor data: a class label, a value, or a score that says how unusual the reading is. Nothing leaves the device.
 </Card>
 
 ```text
-  Cloud ML vs Edge ML
-  ──────────────────────────────────────────
-  Cloud ML:
-  Sensor ──WiFi──► Cloud GPU ──► Result
-          ~100ms    ~50ms        ~100ms
-          network   inference    network
-          Total: ~250ms + connectivity required
+  Model on a server
+  Sensor ──Wi-Fi──► Server ──Wi-Fi──► Result
+           ~100 ms   ~50 ms   ~100 ms
+           Total: ~250 ms, and a network is required
 
-  Edge ML (TinyML):
+  Model on the microcontroller (TinyML)
   Sensor ──► MCU ──► Result
-              ~5ms
-              inference
-          Total: ~5ms, works offline
+             about 1 ms to tens of ms
+           Total: the same, and it works offline
 ```
 
-### Why Run ML on the Edge?
+The time on the MCU depends on the size of the model. The 321-number model of this lesson needs tens of microseconds for one inference. A motion or sound model needs about 1 ms to tens of milliseconds. A whole cycle is longer than one inference: a device that first records one second of sound answers after that second, however fast the model runs.
 
-| Benefit | Explanation |
-|---------|-------------|
-| **Low latency** | Inference takes milliseconds on-device. No network round-trip. |
-| **Connectivity optional** | The model is baked into firmware. Core inference works offline, though production systems benefit from cloud connectivity for model updates and escalation (Lesson 9). |
-| **Privacy** | Raw sensor data never leaves the device. Only results are transmitted. |
-| **Low power** | A Cortex-M4 running inference at 1 Hz draws single-digit milliamps. |
-| **Low cost** | A 2 USD MCU replaces a 50 USD SBC or a cloud API subscription. |
+### Why run the model on the device?
 
-```text
-  TinyML Pipeline: Train to Deploy
-  ──────────────────────────────────────────
-  PC / Cloud                MCU (ESP32)
-  ──────────                ────────────
-  1. Collect         5. Flash C array
-     training data      to MCU flash
-       │                    │
-  2. Train model     6. TFLM interpreter
-     (TensorFlow)       loads model
-       │                    │
-  3. Quantize        7. Feed live sensor
-     float32 → int8     data as input
-       │                    │
-  4. Convert to      8. Get prediction
-     .tflite → C        (class label or
-     header array        regression value)
-```
+The drawing shows the short delay and the independence from the network. There are three more gains. Raw sensor data stay on the device, and only results are sent. A Cortex-M4 that runs one inference a second draws a few milliamps. And a 2 USD MCU does work that would otherwise need a 50 USD single-board computer or a paid cloud service.
+
+The cost is size. A model that fits in kilobytes is less accurate than a large model on a server, and changing it means updating the firmware.
 
 ## Hardware Constraints
 
 <InArticleAd />
 
 
-Before writing any code, internalize the resource budget of common TinyML targets.
+The model shares flash and RAM with your firmware, and the processor sets how long one inference takes. These are common TinyML chips. An FPU (floating-point unit) is hardware for arithmetic with fractional numbers, which is slow without it.
 
 | MCU | CPU | Clock | Flash | SRAM | FPU | Typical Use |
 |-----|-----|-------|-------|------|-----|-------------|
@@ -99,43 +76,35 @@ Before writing any code, internalize the resource budget of common TinyML target
 | nRF52840 (Cortex-M4F) | Single-core | 64 MHz | 1 MB | 256 KB | Yes | BLE + ML |
 
 **Practical limits for model size:**
-- Flash: your model (as a C array) must fit in flash alongside the firmware. A typical budget is 50 KB to 500 KB for the model.
-- RAM: the TFLM interpreter needs a "tensor arena" in RAM to hold intermediate activations. Budget 20 KB to 100 KB depending on the model.
-- Compute: inference time depends on the number of multiply-accumulate operations. Int8 quantized models are 2x to 4x faster than float32 on Cortex-M4 with CMSIS-NN.
+- Flash: the model is stored as a constant C array beside the firmware. A usual budget is 50 KB to 500 KB.
+- RAM: the interpreter needs room for the input, the output and the results between layers. TensorFlow Lite for Microcontrollers (TFLM) takes it from one fixed array, the tensor arena. A tensor is an array of numbers. Budget 20 KB to 100 KB.
+- Compute: the time grows with the number of multiplications. With 8-bit integers (int8) a model runs 2 to 4 times faster than with 32-bit floating-point numbers (float32) on a Cortex-M4 with CMSIS-NN, Arm's library of fast routines.
 
 ## The ML Pipeline for Microcontrollers
 
 <InArticleAd />
 
 
-```mermaid
-flowchart TD
-    A[1. Collect\ntraining data] --> B[2. Train model\nTensorFlow]
-    B --> C[3. Convert to\n.tflite + int8]
-    C --> D[4. Convert to\nC array]
-    D --> E[5. Write\nfirmware + TFLM]
-    E --> F[6. Flash, run,\nevaluate]
-    F -->|accuracy too low?| B
-```
+Every project in this course follows six steps. The first four run on the PC and the last two on the MCU. If step 6 shows too little accuracy, return to step 2.
 
 <Steps>
 1. **Collect or generate training data.**
-   For this lesson we generate synthetic sine wave data. In later lessons you will collect real sensor data.
+   Here we generate sine wave data with noise. Later lessons use real sensor data.
 
 2. **Train a model in TensorFlow (or PyTorch, scikit-learn).**
-   Use standard Python ML tooling on your PC. The model architecture must be small enough to convert.
+   The model must be small enough for the chip.
 
 3. **Convert to TensorFlow Lite (.tflite).**
-   The TFLite converter produces a FlatBuffer binary. Apply post-training quantization (int8) to shrink size and speed up inference.
+   The converter writes one binary file. At this step, quantization stores each number in 8 bits in place of 32, so the file is smaller and inference is faster.
 
 4. **Convert .tflite to a C array.**
    The `xxd` utility (or a Python script) turns the binary into a `const unsigned char[]` that compiles into firmware.
 
 5. **Write firmware that runs the TFLM interpreter.**
-   Allocate a tensor arena, load the model, invoke the interpreter, and read the output tensor.
+   Declare a tensor arena, load the model, call the interpreter, and read the output tensor.
 
 6. **Flash, run, and evaluate.**
-   Measure accuracy against ground truth and log inference time.
+   Compare the predictions with the true values and log the inference time.
 </Steps>
 
 ## Project: Sine Wave Predictor on ESP32
@@ -143,7 +112,7 @@ flowchart TD
 <InArticleAd />
 
 
-We will train a tiny neural network to approximate the function `y = sin(x)` over the range `[0, 2*pi]`. This is the canonical "hello world" of TinyML because it requires zero external hardware (just an ESP32 and a serial monitor) and it exercises every step of the pipeline.
+We will train a tiny neural network to approximate `y = sin(x)` over the range `[0, 2*pi]`. A neural network is a model built from layers. Each layer multiplies its inputs by weights, adds a bias, and passes the sums on. The weights and biases are the adjustable numbers. This is the usual first TinyML program: it needs only an ESP32 and a serial monitor, and it uses every step of the pipeline.
 
 ### Step 1: Train the Sine Model in Python
 
@@ -169,6 +138,7 @@ x_train, x_val = x_values[:800], x_values[800:]
 y_train, y_val = y_values[:800], y_values[800:]
 
 # Define a small fully connected model
+# Three layers of 16, 16 and 1 units: 321 adjustable numbers in total
 model = tf.keras.Sequential([
     tf.keras.layers.Dense(16, activation='relu', input_shape=(1,)),
     tf.keras.layers.Dense(16, activation='relu'),
@@ -192,6 +162,8 @@ model.save('sine_model.keras')
 print("Keras model saved.")
 
 # Convert to TFLite with int8 quantization
+# The converter runs these 100 examples to learn the range of the values,
+# which it needs to map them onto 8-bit numbers
 def representative_dataset():
     for i in range(100):
         yield [np.array([[x_train[i]]], dtype=np.float32)]
@@ -248,7 +220,7 @@ pip install tensorflow numpy
 python train_sine_model.py
 ```
 
-You should see a model summary showing roughly 400 parameters and a TFLite file around 2 KB to 4 KB. The validation MAE should be under 0.15.
+You should see a model summary showing 321 parameters ($1 \times 16 + 16 = 32$, $16 \times 16 + 16 = 272$, and $16 \times 1 + 1 = 17$) and the size of the TFLite file. We did not measure that size. From the parameter count we estimate 2 KB to 4 KB, most of it the description of the layers. The validation MAE (mean absolute error) should be under 0.15.
 
 ### Step 2: Convert .tflite to a C Header
 
@@ -269,7 +241,7 @@ unsigned char sine_model_int8_tflite[] = {
 unsigned int sine_model_int8_tflite_len = 2480;
 ```
 
-Edit the header to add `const` and place it in program memory:
+The length 2480 is an example. Now add `const`, so the array stays in flash and is not copied to RAM, and split it into a header and a source file:
 
 ```c
 // sine_model_data.h
@@ -319,7 +291,7 @@ cd sine_predictor/components
 git clone https://github.com/espressif/esp-tflite-micro.git tfmicro
 ```
 
-Espressif maintains `esp-tflite-micro` as a ready-to-use ESP-IDF component. It includes CMSIS-NN optimized kernels for Xtensa.
+Espressif maintains `esp-tflite-micro` as a ready-to-use ESP-IDF component. It includes ESP-NN optimized kernels for Espressif chips (CMSIS-NN is the matching library for Arm Cortex-M).
 
 #### Top-Level CMakeLists.txt
 
@@ -337,16 +309,18 @@ project(sine_predictor)
 
 ```cmake
 # sine_predictor/main/CMakeLists.txt
+# ESP-IDF names a component after its folder, so the clone in
+# components/tfmicro is the component "tfmicro"
 idf_component_register(
     SRCS "main.cc" "sine_model_data.c"
     INCLUDE_DIRS "."
-    REQUIRES esp-tflite-micro
+    REQUIRES tfmicro esp_timer
 )
 ```
 
 ### Step 4: Firmware (ESP-IDF C with TFLM)
 
-The TFLM C++ API is wrapped here in a C-compatible `main.c` file. Since TFLM is C++, rename this file to `main.cc` if your build requires it, or use `extern "C"` as shown.
+The TFLM API is C++, so the firmware is in `main.cc`. ESP-IDF calls `app_main` from C code, so the function is declared with `extern "C"` as shown.
 
 ```cpp
 // main/main.cc
@@ -414,8 +388,8 @@ extern "C" void app_main(void) {
     float output_scale = output->params.scale;
     int32_t output_zero_point = output->params.zero_point;
 
-    ESP_LOGI(TAG, "Input  scale=%.6f  zero_point=%d", input_scale, input_zero_point);
-    ESP_LOGI(TAG, "Output scale=%.6f  zero_point=%d", output_scale, output_zero_point);
+    ESP_LOGI(TAG, "Input  scale=%.6f  zero_point=%d", input_scale, (int)input_zero_point);
+    ESP_LOGI(TAG, "Output scale=%.6f  zero_point=%d", output_scale, (int)output_zero_point);
 
     // Run inference over a sweep of x values
     ESP_LOGI(TAG, "");
@@ -480,16 +454,16 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 ### Expected Output
 
-You should see a table printed over serial with 50 data points. Typical results on an ESP32 at 240 MHz:
+The serial output is a table of 50 points. Expect these values on an ESP32 at 240 MHz (the sizes are estimates, so trust your own output):
 
-| Metric | Typical Value |
+| Metric | Expected value |
 |--------|---------------|
-| Model size (int8 .tflite) | 2.4 KB to 3.5 KB |
-| Tensor arena used | ~1.2 KB |
+| Model size (int8 .tflite) | 2.4 KB to 3.5 KB (estimate) |
+| Tensor arena used | ~1.2 KB (estimate) |
 | Average inference time | 30 to 80 microseconds |
 | Average absolute error | 0.05 to 0.15 |
 
-The inference time is remarkable. At 50 microseconds per inference, you could run 20,000 predictions per second, far more than any real sensor would need.
+At 50 microseconds an inference, the ESP32 could make 20,000 predictions a second. That holds only for a model this small.
 
 ## Understanding the TFLM Components
 
@@ -498,7 +472,7 @@ The inference time is remarkable. At 50 microseconds per inference, you could ru
 
 ### The Model (FlatBuffer)
 
-TFLite models use Google's FlatBuffers serialization format. The `.tflite` file contains the model architecture (which ops, in what order), the trained weights (quantized to int8), and metadata (tensor shapes, quantization parameters). When you embed this as a C array, it lives in flash. The interpreter reads it directly from flash without copying it to RAM.
+A `.tflite` file is a FlatBuffer, a binary format that a program reads in place without unpacking. It holds the list of operations in order, the trained weights (as int8), and the shape and scale of every tensor. As a `const` C array it stays in flash, and the interpreter reads it there.
 
 ### The Op Resolver
 
@@ -509,7 +483,7 @@ resolver.AddRelu();
 resolver.AddQuantize();
 ```
 
-The template parameter `<3>` is the maximum number of ops. Each `Add...()` call registers a kernel implementation. Only register the ops your model actually uses. This keeps the binary small. If you register `AllOpsResolver` instead, every kernel gets linked in, adding 100 KB or more to the firmware.
+An op (operation) is one kind of calculation in the model, such as a fully connected layer. The op resolver tells the interpreter which code runs each op. `<3>` is the largest number of ops, and each `Add...()` call links in the code for one. Register only the ops your model uses: `AllOpsResolver` links them all and adds 100 KB or more.
 
 ### The Tensor Arena
 
@@ -518,35 +492,30 @@ constexpr int kTensorArenaSize = 4 * 1024;
 alignas(16) static uint8_t tensor_arena[kTensorArenaSize];
 ```
 
-This is a contiguous block of RAM that the interpreter uses for input tensors, output tensors, and all intermediate activation buffers. The alignment matters for SIMD operations. If the arena is too small, `AllocateTensors()` will fail. If it is too large, you waste RAM. Use `interpreter.arena_used_bytes()` to find the actual usage and size the arena accordingly.
+The interpreter never calls `malloc`. A device that runs for months must not run out of memory, so all working memory comes from this one array: the input tensor, the output tensor and the results between layers. `alignas(16)` places it on a 16-byte boundary, which fast vector instructions need.
+
+If the arena is too small, `AllocateTensors()` fails at start, where you can see it. If it is too large, you waste RAM. Print `interpreter.arena_used_bytes()` and set the size a little above it.
 
 ### The Interpreter
 
-The `MicroInterpreter` is the runtime engine. It:
-
-1. Parses the FlatBuffer model.
-2. Allocates tensors within the arena.
-3. On each `Invoke()` call, executes the ops in sequence.
-4. Writes the result to the output tensor.
-
-There is no dynamic memory allocation after `AllocateTensors()`. This deterministic behavior is critical for real-time embedded systems.
+The `MicroInterpreter` reads the model and places the tensors in the arena. On each `Invoke()` call it runs the ops in order and writes the result to the output tensor. No memory is allocated after `AllocateTensors()`.
 
 ## Quantization: Float32 vs Int8
 
 <InArticleAd />
 
 
-The model we trained in Python used float32 weights and activations. The TFLite converter with `representative_dataset` performed post-training quantization to int8. Here is what changed:
+The model was trained with float32 numbers, and the converter stored every weight in 8 bits. An activation is a result between two layers. The values are estimates for this model:
 
 | Property | Float32 Model | Int8 Model |
 |----------|---------------|------------|
 | Weight precision | 32-bit float | 8-bit integer |
-| Model file size | ~8 KB | ~2.5 KB |
+| Model file size | ~3.5 KB | ~2.5 KB |
 | Inference speed on ESP32 | ~120 us | ~50 us |
 | RAM for activations | ~4 KB | ~1.2 KB |
 | Accuracy (MAE) | ~0.05 | ~0.08 |
 
-The int8 model is smaller, faster, and uses less RAM, at the cost of slightly higher error. For a sine wave, the accuracy difference is negligible. For complex models the trade-off becomes more important, which is why Lesson 4 covers quantization in depth.
+The int8 model is smaller and faster, and its error is a little higher. The file shrinks by much less than four times, because most of so small a file describes the layers. Here the loss of accuracy does not matter. For larger models it needs care, as the lesson on [model quantization](/education/edge-ai-tinyml/model-quantization-optimization-mcu/) shows.
 
 ## Exercises
 
@@ -567,7 +536,7 @@ The int8 model is smaller, faster, and uses less RAM, at the cost of slightly hi
   </Card>
 
   <Card title="Exercise 4: Add cos(x)" icon="pencil">
-  Modify the training script to predict both sin(x) and cos(x) simultaneously (2 output neurons). Update the firmware to read both outputs. This introduces multi-output regression.
+  Modify the training script to predict both sin(x) and cos(x) simultaneously (2 output neurons). Update the firmware to read both outputs.
   </Card>
 </CardGrid>
 
@@ -576,7 +545,7 @@ The int8 model is smaller, faster, and uses less RAM, at the cost of slightly hi
 <InArticleAd />
 
 
-You now have the complete mental model: train on PC, quantize, convert to C, run on MCU. In the next lesson, you will use Edge Impulse to collect real accelerometer data, train a motion classifier in the cloud, and deploy it back to the ESP32. The pipeline gets more practical, but the core pattern stays the same.
+The pattern is complete: train on the PC, quantize, convert to C, run on the MCU. Next you use Edge Impulse to collect real accelerometer data and train a motion classifier for the ESP32.
 
 <EdgeAiTinymlComments />
 

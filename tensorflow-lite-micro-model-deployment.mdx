@@ -27,14 +27,14 @@ import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTi
 
 import PodcastEmbed from '../../../../components/PodcastEmbed.astro';
 
-Platforms like Edge Impulse can handle model conversion and deployment automatically, but that convenience comes at the cost of understanding. This lesson takes you inside the TensorFlow Lite for Microcontrollers (TFLM) runtime. You will train a gesture classifier locally in TensorFlow, walk through each stage of model conversion, and deploy the same model on both an ESP32 and an STM32. By porting the model across two different architectures, you will understand exactly how the TFLM interpreter, tensor arena, and op resolver work, and where platform-specific code lives. #TFLiteMicro #ESP32 #STM32
+A model works on the PC, and on the board it refuses to start or prints the same answer for every input. A platform that did the conversion for you cannot tell you why. To find such a fault you must know what the runtime, TensorFlow Lite for Microcontrollers (TFLM), does with your model. In this lesson you train a gesture classifier on your PC, convert it step by step, and run the same model file on an ESP32 and on an STM32. Moving it between two processor families shows what each part of TFLM does (the interpreter, the tensor arena, the op resolver) and which code belongs to the board. #TFLiteMicro #ESP32 #STM32
 
 <PodcastEmbed src="https://open.spotify.com/episode/56vxNUGGAFXcG9AohwTUrS?si=4Lzfj4HFSPmBfKedleMGSw" />
 
 ## What We Are Building
 
 <Card title="Cross-Platform Gesture Classifier" icon="star">
-A 3-class gesture classifier (wave, punch, flex) that runs on both ESP32 and STM32 using the same TFLite model. An MPU6050 accelerometer captures gesture data at 50 Hz. The firmware collects a 1-second window (50 samples, 3 axes = 150 features), runs inference through the TFLM interpreter, and prints the classified gesture with confidence scores and inference timing.
+A classifier for three gestures (wave, punch, flex) that runs on both ESP32 and STM32 from the same TFLite model. An MPU6050 accelerometer is read 50 times a second. The firmware collects a 1-second window (50 samples on 3 axes = 150 input values), runs inference through the TFLM interpreter, and prints the gesture, a score from 0 to 1 for each class, and the inference time.
 </Card>
 
 **Project specifications:**
@@ -44,62 +44,59 @@ A 3-class gesture classifier (wave, punch, flex) that runs on both ESP32 and STM
 | Gestures | wave, punch, flex |
 | Sensor | MPU6050 (I2C) at 50 Hz |
 | Window | 1 second (50 samples x 3 axes = 150 float inputs) |
-| Model | 3-layer FC network, int8 quantized |
+| Model | 3 fully connected layers, int8 quantized |
 | Target 1 | ESP32 (Xtensa LX6, 240 MHz, ESP-IDF) |
-| Target 2 | STM32F4 (Cortex-M4F, 168 MHz, HAL or Makefile) |
+| Target 2 | STM32F411 (Cortex-M4F, 100 MHz, HAL or Makefile) |
 
 ## TFLM Architecture Deep Dive
 
 <InArticleAd />
 
 
-The TensorFlow Lite for Microcontrollers runtime has four key components. Understanding each one is essential for debugging deployment issues.
+The runtime has four parts. Three stay in flash: the model, the interpreter code and the op resolver. One is working memory in RAM: the tensor arena. A tensor is an array of numbers. Each layer reads one tensor and writes the next.
 
 ```text
-  TFLM Runtime Components
-  ──────────────────────────────────────────
-  Flash (read-only)         RAM (tensor arena)
-  ──────────────────        ──────────────────
+  Flash (read-only)        RAM (tensor arena)
   ┌──────────────────┐     ┌────────────────┐
   │ Model FlatBuffer │     │ Input tensor   │
   │ (weights + graph)│     │ [150 x int8]   │
-  │ ~8 KB            │     ├────────────────┤
+  │ ~14 KB           │     ├────────────────┤
   └──────────────────┘     │ Layer 1 output │
-                           │ [64 x int8]    │
+  ┌──────────────────┐     │ [64 x int8]    │
+  │ TFLM interpreter │     ├────────────────┤
+  │ code (~30 KB)    │     │ Layer 2 output │
+  └──────────────────┘     │ [32 x int8]    │
   ┌──────────────────┐     ├────────────────┤
-  │ TFLM Interpreter │     │ Layer 2 output │
-  │ code (~30 KB)    │     │ [32 x int8]    │
-  └──────────────────┘     ├────────────────┤
-                           │ Output tensor  │
-  ┌──────────────────┐     │ [3 x int8]     │
-  │ Op Resolver      │     └────────────────┘
-  │ (selected ops)   │      Total arena: ~4 KB
-  └──────────────────┘
+  │ Op resolver      │     │ Output tensor  │
+  │ (selected ops)   │     │ [3 x int8]     │
+  └──────────────────┘     └────────────────┘
+                           Total arena: ~6 KB
 ```
+
+The four tensors hold only 249 bytes together. The rest of the estimated 6 KB is the interpreter's own record of every tensor and op, and temporary space.
 
 ### 1. The Model (FlatBuffer)
 
-The `.tflite` file is a FlatBuffers binary that encodes the model graph (operators and their connections), the quantized weights, tensor shapes and types, and quantization parameters (scale and zero point for each tensor). When embedded as a `const unsigned char[]` in firmware, the model lives in flash. The interpreter reads it in place; there is no copy to RAM.
+The `.tflite` file is a FlatBuffer, a binary format that a program reads in place without unpacking. It holds the graph (the ops and how they connect), the quantized weights, the shape of each tensor, and the scale and zero point that turn its 8-bit numbers into real values. As a `const unsigned char[]`, the model stays in flash. The interpreter reads it there and makes no copy in RAM.
 
 ```text
-  Model Conversion Pipeline
-  ──────────────────────────────────────────
   TensorFlow (Python, PC)
-  model.h5 (float32, ~32 KB)
+  model.h5 (float32, ~48 KB)
        │
        ▼ TFLiteConverter
-  model.tflite (int8, ~8 KB)
+  model.tflite (int8, ~14 KB)
        │
        ▼ xxd -i model.tflite > model_data.h
   const unsigned char model_data[] = {
-    0x20, 0x00, 0x00, 0x00, 0x54, 0x46,
-    0x4C, 0x33, ...  // FlatBuffer binary
+    0x20, 0x00, 0x00, 0x00, ...  // the same bytes
   };
        │
        ▼ #include "model_data.h"
   ESP32 / STM32 firmware
-  (model lives in flash, read in place)
+  (model stays in flash, read in place)
 ```
+
+Both sizes are estimates, not measurements. The model has 11,843 parameters: 4 bytes each as float32, 1 byte each as int8, plus about 2 KB that describes the layers.
 
 ### 2. The Op Resolver
 
@@ -113,20 +110,17 @@ resolver.AddQuantize();
 resolver.AddDequantize();
 ```
 
-Every neural network layer maps to one or more "ops" (operations). The op resolver is a lookup table that connects op names in the FlatBuffer to kernel implementations compiled into the firmware. Using `MicroMutableOpResolver<N>` instead of `AllOpsResolver` keeps the binary small. Each unused kernel you exclude saves 1 KB to 10 KB of flash.
+An op (operation) is one kind of calculation, and each layer of the network uses one or more. The model file only names its ops. The code that performs them is in your firmware, and the op resolver is the table that connects the two. `MicroMutableOpResolver<N>` links only the ops you add. `AllOpsResolver` links every op, and each unused one costs 1 KB to 10 KB of flash.
 
 If inference fails with "Didn't find op for builtin opcode", you forgot to register an op that the model needs. Check the model ops with:
 
 ```bash
 python3 -c "
 import tensorflow as tf
-interpreter = tf.lite.Interpreter(model_path='gesture_model_int8.tflite')
-interpreter.allocate_tensors()
-# The ops are visible in the model graph
+# Prints every operator in the model, with its input and output tensors
+tf.lite.experimental.Analyzer.analyze(model_path='gesture_model_int8.tflite')
 "
 ```
-
-Or use `flatc` to dump the FlatBuffer schema and inspect the operator codes.
 
 ### 3. The Tensor Arena
 
@@ -135,9 +129,9 @@ constexpr int kTensorArenaSize = 8 * 1024;
 alignas(16) static uint8_t tensor_arena[kTensorArenaSize];
 ```
 
-The tensor arena is a single contiguous block of RAM that holds all runtime tensors: input tensor, output tensor, intermediate activation tensors, and scratch buffers for ops that need temporary workspace. The interpreter performs its own memory planning within this arena during `AllocateTensors()`. There is no `malloc` after that call.
+The interpreter needs memory for the input, the output and the result of each layer. A PC program would request it with `malloc` when needed. A device that runs for months cannot accept a request that fails after weeks, so TFLM takes all its working memory from one array whose size you fix at build time: the tensor arena. During `AllocateTensors()` the interpreter plans where each tensor goes in it. After that call nothing more is allocated.
 
-**Sizing the arena:** Start large (e.g., 32 KB) and use `interpreter.arena_used_bytes()` to find the actual usage. Then shrink the arena to the actual usage plus a 10% to 20% margin. An arena that is too small causes `AllocateTensors()` to fail. An arena that is too large wastes RAM.
+To size the arena, start large (for example 32 KB) and print `interpreter.arena_used_bytes()`. Then shrink the arena to that number plus a margin of 10% to 20%. An arena that is too small makes `AllocateTensors()` fail. An arena that is too large wastes RAM.
 
 ### 4. The Interpreter
 
@@ -146,24 +140,24 @@ static tflite::MicroInterpreter interpreter(model, resolver,
                                              tensor_arena, kTensorArenaSize);
 ```
 
-The `MicroInterpreter` ties everything together. It parses the model, allocates tensors in the arena, and on each `Invoke()` call, executes the ops in topological order. The interpreter is stateless between invocations (given the same input, it produces the same output). This makes it safe to call from a FreeRTOS task without additional synchronization.
+The `MicroInterpreter` joins the other three parts. It reads the model, places the tensors in the arena, and on each `Invoke()` call runs the ops in order, each one reading the tensor that the op before it wrote. It keeps nothing from one call to the next, so the same input always gives the same output. Call one interpreter from one FreeRTOS task only. Two tasks that call it at the same time would write into the same tensor arena.
 
 ## Step 1: Collect Gesture Training Data
 
 <InArticleAd />
 
 
-Use the MPU6050 data collection firmware from Lesson 2. For each gesture, collect at least 50 samples (1-second recordings at 50 Hz).
+Start from the data collection firmware of the [Edge Impulse lesson](/education/edge-ai-tinyml/edge-impulse-data-collection-training/). Record each gesture at least 50 times. One recording is 1 second long: 50 readings at 50 Hz.
 
 ### Gesture Definitions
 
 | Gesture | Motion Description |
 |---------|-------------------|
-| **wave** | Move hand left-right repeatedly (lateral oscillation) |
-| **punch** | Thrust hand forward sharply (acceleration spike on one axis) |
-| **flex** | Rotate wrist upward slowly (gradual tilt change) |
+| wave | Move the hand left and right several times |
+| punch | Push the hand forward sharply (a spike of acceleration on one axis) |
+| flex | Turn the wrist upward slowly (a gradual change of tilt) |
 
-Collect data using the serial capture method:
+The script below sends the line `start` before each recording and then reads 50 lines. Change the collection firmware so that it waits for that line and then sends 50 readings. Collect the data like this:
 
 ```bash
 # Collect 50+ recordings per class, each 1 second (50 samples)
@@ -172,7 +166,7 @@ python collect_gesture.py --label punch --output data/punch/
 python collect_gesture.py --label flex --output data/flex/
 ```
 
-A simple collection script:
+The collection script:
 
 ```python
 # collect_gesture.py
@@ -229,6 +223,8 @@ print("Collection complete.")
 <InArticleAd />
 
 
+The script loads the recordings, scales every value to the range 0 to 1, trains the network, converts it to int8, and checks the int8 model on recordings kept out of training. The last layer uses softmax, which turns the three outputs into scores that add up to 1.
+
 ```python
 # train_gesture_model.py
 # Train a gesture classifier and export to TFLite (int8)
@@ -265,7 +261,7 @@ print(f"Dataset: {len(X_all)} samples, {len(classes)} classes")
 print(f"Class distribution: {np.bincount(y_all)}")
 
 # Normalize features to [0, 1] range
-# Accelerometer values are typically in [-4, 4] g range
+# The MPU6050 is set to +/- 2 g, so the values lie in about [-2, 2] g
 X_min = X_all.min()
 X_max = X_all.max()
 X_all = (X_all - X_min) / (X_max - X_min)
@@ -280,6 +276,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 # One-hot encode labels
+# (class 1 of 3 becomes [0, 1, 0], the form the three outputs are compared with)
 y_train_oh = tf.keras.utils.to_categorical(y_train, num_classes=len(classes))
 y_test_oh = tf.keras.utils.to_categorical(y_test, num_classes=len(classes))
 
@@ -370,7 +367,7 @@ print(f"Quantized model test accuracy: {correct / len(X_test):.4f}")
 xxd -i gesture_model_int8.tflite > gesture_model_data.cc
 ```
 
-Edit the generated file to make the array `const` and `alignas(8)`:
+Edit the generated file to make the array `const`, so that it stays in flash, and `alignas(8)`, so that it starts on an 8-byte boundary as the FlatBuffer reader expects. Then write this header for it:
 
 ```cpp
 // gesture_model_data.h
@@ -380,9 +377,11 @@ Edit the generated file to make the array `const` and `alignas(8)`:
 extern const unsigned char gesture_model_int8_tflite[];
 extern const unsigned int gesture_model_int8_tflite_len;
 
-// Normalization parameters (from training)
-#define GESTURE_INPUT_MIN  -4.0f
-#define GESTURE_INPUT_MAX   4.0f
+// Normalization parameters: replace these two values with the min and
+// max that train_gesture_model.py prints ("Normalization: min=..., max=...").
+// The firmware must scale its input exactly as the training script did.
+#define GESTURE_INPUT_MIN  -2.0f
+#define GESTURE_INPUT_MAX   2.0f
 #define GESTURE_NUM_CLASSES 3
 
 static const char* gesture_labels[] = {"wave", "punch", "flex"};
@@ -394,6 +393,8 @@ static const char* gesture_labels[] = {"wave", "punch", "flex"};
 
 <InArticleAd />
 
+
+The firmware records 1 second of readings, scales and quantizes them exactly as the training script did, calls `Invoke()`, and turns the three int8 outputs into scores. One answer comes each second, and the inference is the short part of it.
 
 ```cpp
 // main/main.cc (ESP32 version)
@@ -499,8 +500,8 @@ extern "C" void app_main(void) {
     int32_t output_zp = output->params.zero_point;
 
     ESP_LOGI(TAG, "Arena used: %zu bytes", interpreter.arena_used_bytes());
-    ESP_LOGI(TAG, "Input: scale=%.6f zp=%d", input_scale, input_zp);
-    ESP_LOGI(TAG, "Output: scale=%.6f zp=%d", output_scale, output_zp);
+    ESP_LOGI(TAG, "Input: scale=%.6f zp=%d", input_scale, (int)input_zp);
+    ESP_LOGI(TAG, "Output: scale=%.6f zp=%d", output_scale, (int)output_zp);
 
     float raw_buffer[NUM_FEATURES];
     int interval_ms = 1000 / SAMPLE_RATE_HZ;
@@ -565,7 +566,7 @@ extern "C" void app_main(void) {
 <InArticleAd />
 
 
-The same TFLite model runs on STM32 with minimal changes. The core inference code is identical; only the hardware abstraction layer (I2C, timing, logging) differs.
+The same TFLite model runs on the STM32. The inference code is identical. Only the code that touches the hardware differs: I2C, timing and logging.
 
 ### STM32 Project Structure
 
@@ -718,26 +719,28 @@ int main(void) {
 <InArticleAd />
 
 
-Deploy the same int8 model on both platforms and measure the results.
+Run the same int8 model on both boards and compare what they print. The sizes below are estimates from the parameter count, and the times are typical ranges.
 
 ### Inference Time Comparison
 
 | Metric | ESP32 (240 MHz Xtensa) | STM32F411 (100 MHz Cortex-M4F) |
 |--------|------------------------|---------------------------------|
-| Model size in flash | ~12 KB | ~12 KB (identical) |
-| Tensor arena used | ~6 KB | ~6 KB (identical) |
+| Model size in flash | ~14 KB (estimate) | ~14 KB (identical) |
+| Tensor arena used | ~6 KB (estimate) | ~6 KB (identical) |
 | Inference time | 0.5 to 2 ms | 2 to 8 ms |
 | Total firmware size | ~400 KB (with ESP-IDF) | ~120 KB (bare metal) |
 
-### Why the Timing Difference?
+The STM32 code times the inference with `HAL_GetTick()`, which counts whole milliseconds. A printed time can be wrong by 1 ms, so average many inferences before you compare.
 
-The model and runtime are identical. The timing difference comes from three factors:
+### Why the timing differs
 
-1. **Clock speed.** The ESP32 runs at 240 MHz; the STM32F411 runs at 100 MHz. Higher clock means fewer microseconds per operation.
+The model and the runtime are identical. The difference has three causes:
 
-2. **Cache architecture.** The ESP32 has instruction cache for flash-mapped code. The STM32F4 has ART Accelerator (flash prefetch). Both help, but behave differently for the mixed sequential/branching pattern of interpreter execution.
+1. Clock speed. The ESP32 runs at 240 MHz and the STM32F411 at 100 MHz.
 
-3. **CMSIS-NN acceleration.** On Cortex-M4, TFLM can use CMSIS-NN optimized kernels that exploit the DSP instructions (SMLAD, etc.) for int8 dot products. The Xtensa architecture has its own optimizations through Espressif's `esp-nn` library. Both provide significant speedups over generic C implementations.
+2. Reading code from flash. Flash is slower than the processor. The ESP32 uses a cache and the STM32F4 a prefetch unit (the ART Accelerator), and the two do not help equally.
+
+3. Optimized routines. On a Cortex-M4, TFLM can use CMSIS-NN, which uses DSP instructions to multiply and add several 8-bit numbers in one step. On the ESP32, Espressif's `esp-nn` library does the same job. Both are much faster than plain C.
 
 ### RAM Budget Comparison
 
@@ -749,7 +752,7 @@ The model and runtime are identical. The timing difference comes from three fact
 | FreeRTOS overhead | ~15 KB | 0 (bare metal) |
 | Available for application | ~490 KB | ~118 KB |
 
-The ESP32 has abundant RAM for TinyML. The STM32F411 is tighter, but 128 KB is still comfortable for models that need 10 to 20 KB of arena space. Smaller Cortex-M0+ devices (like the RPi Pico with 264 KB, or an STM32L0 with 20 KB) require more careful arena sizing.
+Both chips have plenty of RAM for this model. A small chip such as an STM32L0 with 20 KB of RAM needs a carefully sized arena.
 
 ## Debugging Common Issues
 
@@ -758,15 +761,15 @@ The ESP32 has abundant RAM for TinyML. The STM32F411 is tighter, but 128 KB is s
 
 <CardGrid>
   <Card title="AllocateTensors() fails" icon="warning">
-  The tensor arena is too small. Increase `kArenaSize` and retry. Use `interpreter.arena_used_bytes()` after a successful allocation to find the minimum size.
+  The tensor arena is too small. Increase `kArenaSize`, then read `interpreter.arena_used_bytes()` to find the size needed.
   </Card>
 
   <Card title="Didn't find op for builtin opcode X" icon="warning">
-  You forgot to register an op. Check which ops the model uses by inspecting it with `netron.app` (a web-based model visualizer) or by running `interpreter.get_output_details()` in Python. Add the missing op to the resolver.
+  An op is not registered. List the ops of the model with `netron.app` (a model viewer in the browser) or with the Analyzer command shown earlier, and add the missing one to the resolver.
   </Card>
 
   <Card title="Output values are all the same" icon="warning">
-  Check your quantization parameters. If input normalization does not match the training preprocessing (same min, max, scale), the quantized input values will be wrong, and the model output will be garbage. Print the raw quantized input values and verify them against the Python reference.
+  Check your quantization parameters. If input normalization does not match the training preprocessing (same min, max, scale), the quantized input values will be wrong, and the model output will mean nothing. Print the raw quantized input values and verify them against the Python reference.
   </Card>
 
   <Card title="Inference is too slow" icon="warning">
@@ -800,10 +803,10 @@ When moving a TFLM application from one MCU to another, only these pieces change
 | Printf / logging | Yes | `ESP_LOGI` vs UART printf vs SWO |
 | Build system | Yes | ESP-IDF CMake vs STM32 Makefile vs Arduino |
 
-The TFLM code itself is fully portable. This is by design. The "micro" in TFLite Micro means it has no OS dependencies, no dynamic allocation, and no file I/O. You bring the platform layer; TFLM brings the inference engine.
+The TFLM code is the same on every chip. It needs no operating system, no dynamic allocation and no files. You write the platform layer: the sensor, the timer and the output.
 
 :::tip[Instrument it]
-Deployment is the step that moves the detector from your laptop to the device that actually touches the machine. The model now runs on the [MCU wired to the sensor](/education/sensor-actuator-interfacing-stm32/), reading the same signal it trained on and deciding in milliseconds whether something is wrong. Match the input scaling and sample rate to training exactly, and the device becomes a self-contained monitor that [reports a verdict](/education/iot-systems/) to [siliconwit.io](https://siliconwit.io), not a data dump, on whatever it is bolted to.
+After deployment the model runs on the [MCU wired to the sensor](/education/sensor-actuator-interfacing-stm32/). Match the input scaling and the sample rate to training exactly. The device can then [report a result](/education/iot-systems/) to [siliconwit.io](https://siliconwit.io) in place of raw data. Treat that result as advice for a person or for a slower decision. A fast safety limit stays a plain rule in the firmware.
 :::
 
 ## Exercises
@@ -834,7 +837,7 @@ Deployment is the step that moves the detector from your laptop to the device th
 <InArticleAd />
 
 
-You can now train, convert, and deploy TFLite Micro models on multiple platforms. But the models so far have been small, and we accepted the default quantization without questioning it. In Lesson 4 you will take a larger CNN model, apply both post-training quantization and quantization-aware training, and benchmark the accuracy, speed, and size trade-offs in detail.
+So far we accepted the converter's quantization without checking what it cost. Next you quantize a larger model in two ways, after training and during training, and measure what each does to accuracy, speed and size.
 
 <EdgeAiTinymlComments />
 

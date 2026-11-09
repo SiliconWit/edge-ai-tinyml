@@ -25,36 +25,31 @@ import { Card, CardGrid, Badge, Steps, LinkButton, FileTree } from '@astrojs/sta
 
 import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTinymlComments.astro';
 
-Image classification is the most demanding TinyML task you can run on a microcontroller. A single 96x96 grayscale image is 9,216 bytes. A 96x96 RGB image is 27,648 bytes. The model weights, intermediate activations, and the image buffer all compete for the same limited RAM. The ESP32-CAM module solves part of this problem with 4 MB of PSRAM, but you still need careful memory management to make everything fit. This capstone lesson puts together everything from the course: model training, quantization, TFLM deployment, and real-time embedded application logic, all applied to the hardest modality. #ComputerVision #TinyML #ESP32CAM
+A camera on a small board can read what no other sensor can: whether a part is in its fixture, whether a lamp is lit, whether someone stands at a door. The difficulty is memory. One 96x96 grayscale image is 9,216 bytes, and while the model works on it, the intermediate results need many times more. On a microcontroller the image, the model and those results share a few hundred kilobytes of RAM. The ESP32-CAM adds 4 MB of slower external RAM (PSRAM), which helps, but you must still decide where each block of data lives. This lesson trains a small image classifier, fits it into that memory and runs it on the camera board. The example detects people, so the lesson also says when you must ask before you record. #ComputerVision #TinyML #ESP32CAM
 
 ```text
-  ESP32-CAM Memory Layout
+  Where each block of data lives (person model)
   ──────────────────────────────────────────
-  Internal SRAM (~520 KB)
+  Flash, 4 MB (read-only)
   ┌──────────────────────────────────────┐
-  │ FreeRTOS heap + task stacks   200 KB │
-  │ TFLM interpreter + ops         50 KB │
-  │ Tensor arena                  100 KB │
-  │ Misc (WiFi, drivers)          170 KB │
+  │ firmware + model weights             │
   └──────────────────────────────────────┘
-
-  PSRAM (4 MB, SPI-connected)
+  Internal SRAM, ~520 KB (fast)
   ┌──────────────────────────────────────┐
-  │ Camera frame buffer (QVGA)    150 KB │
-  │ Resized input (96x96)           9 KB │
-  │ Model weights (flash-mapped)  250 KB │
-  │ Available                    ~3.5 MB │
+  │ FreeRTOS, task stacks, interpreter   │
+  │ Wi-Fi and drivers, if used           │
   └──────────────────────────────────────┘
-
-  Key: tensor arena MUST be in internal
-  SRAM for speed. Image buffers can use
-  PSRAM (slower but larger).
+  PSRAM, 4 MB (slower, reached over SPI)
+  ┌──────────────────────────────────────┐
+  │ camera frame, 96 x 96          9 KB  │
+  │ tensor arena                 150 KB  │
+  └──────────────────────────────────────┘
 ```
 
 ## What We Are Building
 
 <Card title="ESP32-CAM Image Classifier" icon="star">
-An ESP32-CAM module (AI-Thinker variant with OV2640 camera and 4 MB PSRAM) that captures images, preprocesses them to 96x96 grayscale, runs a quantized MobileNetV1 (alpha=0.25) or custom CNN through TFLite Micro, and outputs the classification result over serial. Two demo applications: person detection (binary: person/no-person) and object classification (multi-class: 5 to 10 categories). The system runs inference at approximately 2 to 5 frames per second.
+An ESP32-CAM module (AI-Thinker variant with OV2640 camera and 4 MB PSRAM) that captures images, preprocesses them to 96x96 grayscale, runs a quantized MobileNetV1 (alpha=0.25) or custom CNN through TFLite Micro, and outputs the classification result over serial. Two demo applications: person detection (two classes: person or no person) and object classification (5 to 10 classes). Expect about 1 to 5 frames per second, depending on the model. That figure is an estimate, not a measurement.
 </Card>
 
 **Project specifications:**
@@ -66,9 +61,9 @@ An ESP32-CAM module (AI-Thinker variant with OV2640 camera and 4 MB PSRAM) that 
 | PSRAM | 4 MB |
 | Internal SRAM | ~520 KB |
 | Input resolution | 96 x 96 grayscale |
-| Model (person detection) | Custom CNN, ~30 KB quantized |
-| Model (object classification) | MobileNetV1 0.25, ~250 KB quantized |
-| Inference rate | 2 to 5 FPS (model dependent) |
+| Model (person detection) | Custom CNN, 8,770 parameters, under 30 KB quantized (estimate) |
+| Model (object classification) | MobileNetV1 0.25, about 250 KB quantized (estimate) |
+| Inference rate | About 1 to 5 FPS (estimate, model dependent) |
 | Output | Serial (class + confidence), onboard LED flash |
 
 ### Bill of Materials
@@ -80,24 +75,21 @@ An ESP32-CAM module (AI-Thinker variant with OV2640 camera and 4 MB PSRAM) that 
 | | Jumper wires | 4 | For serial connection |
 
 ```text
-  Image Processing Pipeline (on ESP32)
+  One frame, from camera to answer
   ──────────────────────────────────────────
-  OV2640 Camera
-  1600x1200 JPEG
+  OV2640 camera
+  set to 96 x 96 grayscale
+       │  9,216 bytes, values 0 to 255
+       ▼  subtract 128
+  96 x 96 x 1 int8 input, -128 to 127
        │
-       ▼ decode + resize
-  96 x 96 grayscale (9,216 bytes)
-       │
-       ▼ normalize to [0, 1] or [-128, 127]
-  96 x 96 x 1 int8 tensor
-       │
-       ▼ TFLM inference (~200 ms)
+       ▼  run the model (~200 ms, estimate)
   ┌────────────────────────┐
   │ person:    0.87        │
   │ no_person: 0.13        │
   └────────────────────────┘
        │
-       ▼ if person > 0.7
+       ▼  if person > 0.7
   LED flash + serial output
 ```
 
@@ -105,21 +97,29 @@ An ESP32-CAM module (AI-Thinker variant with OV2640 camera and 4 MB PSRAM) that 
 The ESP32-CAM does not have a USB port. You need an external USB-to-serial adapter for programming and serial communication. Some carrier boards (e.g., ESP32-CAM-MB) include a USB interface. If you have one of those, you can skip the separate adapter.
 :::
 
+:::caution[Images of people]
+This lesson points a camera at people. Ask before you record or test on anyone, and say what is kept. Put a visible notice where a camera runs, and check the rules of your site and your country first. Keep images on the device where you can: the firmware here classifies each frame in RAM, replaces it with the next one, and sends out only a label and a score. If you add the web page or the image collection from the exercises, you are storing or sending pictures of people, so collect only what you need and delete it after use.
+:::
+
 ## Image Classification on Constrained Hardware
 
 <InArticleAd />
 
 
-Running a CNN on a microcontroller is fundamentally different from running one on a GPU. On a GPU, you load the entire model into VRAM, process a batch of images, and the framework handles memory allocation transparently. On an MCU, every byte matters.
+On a PC, a framework loads the model into gigabytes of memory and you never count bytes. On a microcontroller you must count them, because three things compete for RAM: the image, the weights of the model, and its intermediate results.
+
+A convolutional neural network (CNN) is a model built for images. Each layer slides small filters over the picture and produces a stack of new pictures called feature maps, one for each filter. Those maps are the intermediate results, and they are larger than the image itself.
+
+The table shows what each model of this lesson needs. The arena and time figures are estimates.
 
 | Resource | ESP32-CAM Available | Person Detection Model | MobileNetV1 0.25 |
 |----------|-------------------|----------------------|-------------------|
 | Flash (model storage) | 4 MB | ~30 KB | ~250 KB |
-| SRAM (tensor arena) | ~200 KB usable | ~100 KB | ~180 KB |
-| PSRAM (image buffer) | 4 MB | 9 KB (96x96x1) | 9 KB (96x96x1) |
+| Tensor arena | ~200 KB internal, or 4 MB PSRAM | ~100 KB | ~180 KB |
+| Image buffer (in PSRAM) | 4 MB | 9 KB (96x96x1) | 9 KB (96x96x1) |
 | Inference time | N/A | ~200 ms | ~800 ms |
 
-The tensor arena is the memory block where TFLite Micro stores input/output tensors and intermediate activations during inference. For image models, the arena must be large enough to hold the largest intermediate activation map. In a CNN, the first few layers often produce the largest feature maps (e.g., 96x96x8 = 73,728 bytes for 8 filters at input resolution). The arena size is the primary constraint on model complexity.
+The tensor arena is the block of memory that TFLite Micro uses for the input, the output and the feature maps while the model runs. It must hold the largest maps that exist at the same moment. In the person model the first layer turns the 9,216-byte image into 8 maps of 96 x 96, which is 73,728 bytes, and both are in memory together: about 83 KB. That one layer sets the size of the arena. So the arena, not the size of the weights, limits how large a model you can run.
 
 ## ESP32-CAM Hardware Overview
 
@@ -133,7 +133,7 @@ The AI-Thinker ESP32-CAM module integrates:
 - **4 MB PSRAM:** Connected via SPI, accessible as external RAM through the ESP32's cache
 - **4 MB Flash:** For firmware and model storage
 - **Onboard LED flash:** GPIO 4, useful for low-light image capture
-- **MicroSD card slot:** GPIO 2, 12, 13, 14, 15 (shared with some camera pins in certain modes)
+- **MicroSD card slot:** GPIO 2, 4, 12, 13, 14, 15 (GPIO 4 is shared with the flash LED)
 
 ### Pin Connections for Programming
 
@@ -250,7 +250,7 @@ Key configuration choices:
 <InArticleAd />
 
 
-Even with the camera configured to output 96x96 grayscale, the raw pixel values need normalization before they can be fed to the model.
+The camera gives each pixel as a number from 0 to 255. The quantized model expects numbers from -128 to 127, so the firmware subtracts 128 from every pixel. A model must always receive its input on the scale it was trained and converted with.
 
 ```c
 /* Preprocess a grayscale frame buffer for model input.
@@ -313,7 +313,7 @@ static void resize_bilinear(const uint8_t *src, int src_w, int src_h,
 <InArticleAd />
 
 
-We train two models: a custom small CNN for person detection (binary) and a MobileNetV1 0.25 for multi-class object classification (transfer learning). Both use grayscale 96x96 input.
+You train two models, both with a 96x96 grayscale input. The first is a small CNN built from nothing for person detection. The second starts from MobileNetV1, a network already trained on a large public image set (ImageNet), and retrains only its last part for your own classes. This is called transfer learning, and it needs far fewer images than training from nothing.
 
 ### Person Detection CNN
 
@@ -389,7 +389,7 @@ Trainable params: 8,770
 
 ### Dataset Preparation
 
-The Visual Wake Words (VWW) dataset is a subset of MS COCO with binary labels (person present / no person). It is specifically designed for TinyML benchmarking.
+A model learns only from labelled examples, here images marked "person" or "no person". The Visual Wake Words (VWW) dataset is a public research set of such images, taken from MS COCO and made for small models. If you collect your own images of people in its place, the caution at the top of this lesson applies to every picture.
 
 ```python
 import tensorflow_datasets as tfds
@@ -448,7 +448,7 @@ ds_train, ds_val = load_vww_dataset()
 data_augmentation = keras.Sequential([
     layers.RandomFlip('horizontal'),
     layers.RandomRotation(0.1),
-    layers.RandomBrightness(0.2),
+    layers.RandomBrightness(0.2, value_range=(0.0, 1.0)),  # images are in [0, 1]
     layers.RandomContrast(0.2),
 ])
 
@@ -475,7 +475,7 @@ print(f"Validation accuracy: {test_acc:.4f}")
 
 ### MobileNetV1 0.25 with Transfer Learning
 
-For multi-class classification (e.g., 5 object categories), we use MobileNetV1 with width multiplier 0.25 and transfer learning from ImageNet weights.
+For several classes (for example 5 kinds of object), use MobileNetV1 with a width multiplier of 0.25, which means a quarter of the usual number of filters in each layer. Training has two phases: first only the new last layers, then the last 20 layers of the base at a lower learning rate.
 
 ```python
 def build_mobilenet_classifier(num_classes=5):
@@ -514,9 +514,9 @@ def build_mobilenet_classifier(num_classes=5):
 # Phase 1: Train only the new layers (feature extraction)
 model_mob, base = build_mobilenet_classifier(num_classes=5)
 
-# Assume ds_train_5class and ds_val_5class are prepared
+# Assume ds_train_5class and ds_val_5class are prepared (batched)
 # with 5 object categories from a custom dataset
-model_mob.fit(ds_train_batched, validation_data=ds_val_batched,
+model_mob.fit(ds_train_5class, validation_data=ds_val_5class,
               epochs=10)
 
 # Phase 2: Fine-tune the last few layers
@@ -529,7 +529,7 @@ model_mob.compile(
     loss='sparse_categorical_crossentropy',
     metrics=['accuracy'])
 
-model_mob.fit(ds_train_batched, validation_data=ds_val_batched,
+model_mob.fit(ds_train_5class, validation_data=ds_val_5class,
               epochs=20,
               callbacks=[
                   keras.callbacks.EarlyStopping(patience=5,
@@ -540,6 +540,8 @@ model_mob.fit(ds_train_batched, validation_data=ds_val_batched,
 
 <InArticleAd />
 
+
+The trained model stores each weight as a 32-bit float. Quantization stores it in 8 bits, so the file and the arena become about four times smaller. The converter needs about 100 sample images (the representative dataset) to learn the range of values inside the model.
 
 ```python
 def quantize_model(keras_model, representative_data, output_path):
@@ -606,7 +608,7 @@ for img, label in ds_val.take(200):
     scale = input_details[0]['quantization'][0]
     zp = input_details[0]['quantization'][1]
     img_np = img.numpy()
-    quantized = np.clip(img_np / scale + zp, -128, 127).astype(np.int8)
+    quantized = np.clip(np.round(img_np / scale + zp), -128, 127).astype(np.int8)
     quantized = np.expand_dims(quantized, 0)
 
     interpreter.set_tensor(input_details[0]['index'], quantized)
@@ -664,7 +666,7 @@ static const char *TAG = "cam_classify";
 #define CAM_PIN_HREF    23
 #define CAM_PIN_PCLK    22
 
-#define FLASH_LED_PIN   4
+#define FLASH_LED_PIN   GPIO_NUM_4
 #define IMG_WIDTH       96
 #define IMG_HEIGHT      96
 #define NUM_CLASSES     2
@@ -803,7 +805,7 @@ static void classification_task(void *arg)
     ESP_LOGI(TAG, "Input: [%d, %d, %d, %d], scale=%.6f, zp=%d",
              input->dims->data[0], input->dims->data[1],
              input->dims->data[2], input->dims->data[3],
-             input->params.scale, input->params.zero_point);
+             input->params.scale, (int)input->params.zero_point);
 
     /* Classification loop */
     int frame_count = 0;
@@ -957,7 +959,7 @@ CONFIG_CAMERA_TASK_STACK_SIZE=4096
    idf.py -p /dev/ttyUSB0 flash monitor
    ```
 
-2. Point the camera at a person. The serial monitor shows:
+2. Point the camera at a person who has agreed to it. The serial monitor shows lines like these (the times are examples, not measurements):
    ```
    I (1234) cam_classify: [1] person (0.91), Infer: 198 ms
    I (1432) cam_classify: [2] person (0.88), Infer: 195 ms
@@ -993,7 +995,7 @@ static const char *CLASS_LABELS[] = {
 #define TENSOR_ARENA_SIZE  (300 * 1024)
 ```
 
-The MobileNetV1 0.25 model is larger (~250 KB) and slower (~800 ms per inference) but significantly more capable. With transfer learning from ImageNet, it can distinguish between 5 to 10 object categories with reasonable accuracy (85% or better) even at 96x96 grayscale resolution.
+The MobileNetV1 0.25 model is larger (about 250 KB) and slower (about 800 ms for each frame, estimated). With transfer learning from ImageNet it can separate 5 to 10 kinds of object. Expect an accuracy near 85% on images like your training set, and less when the light or the background changes.
 
 ## Memory Optimization Techniques
 
@@ -1002,7 +1004,7 @@ The MobileNetV1 0.25 model is larger (~250 KB) and slower (~800 ms per inference
 
 ### PSRAM Usage Strategy
 
-The ESP32-CAM has 4 MB of PSRAM, but PSRAM access is slower than internal SRAM (roughly 3x slower for random access). The strategy is:
+The ESP32-CAM has 4 MB of PSRAM, but PSRAM is slower than internal SRAM, because every access goes over SPI. So large blocks that are read in order go to PSRAM, and small blocks that are used all the time stay inside:
 
 | Data | Location | Reason |
 |------|----------|--------|
@@ -1052,17 +1054,22 @@ If the model barely fits, try these techniques:
 <InArticleAd />
 
 
+These figures are estimates from the parameter counts and typical ESP32 speeds. They were not measured for this lesson, and the accuracies are typical of such models on their validation images. Your firmware prints the real inference time, so use your own numbers.
+
 | Model | Size (int8) | Arena | Inference | FPS | Accuracy |
 |-------|-------------|-------|-----------|-----|----------|
-| Person CNN | 30 KB | 100 KB | ~200 ms | ~5 | 89% |
-| MobileNetV1 0.25 (5 class) | 250 KB | 280 KB | ~800 ms | ~1.2 | 86% |
-| MobileNetV1 0.25 (person) | 250 KB | 280 KB | ~800 ms | ~1.2 | 92% |
+| Person CNN | ~30 KB | ~100 KB | ~200 ms | ~5 | ~89% |
+| MobileNetV1 0.25 (5 class) | ~250 KB | ~180 KB | ~800 ms | ~1.2 | ~86% |
+| MobileNetV1 0.25 (person) | ~250 KB | ~180 KB | ~800 ms | ~1.2 | ~92% |
 
 Notes:
-- Inference time measured at 240 MHz, tensor arena in PSRAM.
-- FPS includes camera capture time (~5 ms) plus inference time.
-- Accuracy measured on held-out validation sets after int8 quantization.
-- Moving the tensor arena to internal SRAM (when it fits) improves inference time by approximately 30%.
+
+- The inference times assume 240 MHz and the tensor arena in PSRAM.
+- FPS counts the camera capture time (about 5 ms) plus the inference time.
+- Accuracy is the share of validation images classified correctly after int8 quantization. In another room or another light it will be lower.
+- Moving the tensor arena to internal SRAM (when it fits) should shorten inference by roughly 30%.
+
+A person detector that is right 89 times in 100 is wrong 11 times in 100. Use it to count, to wake a display or to save power. Never make it the only thing that keeps a person safe near a machine: that is the work of a guard, a light curtain or an interlock.
 
 ## Project File Structure
 
@@ -1086,31 +1093,17 @@ Notes:
 <InArticleAd />
 
 
-Over nine lessons you progressed from deploying a pre-trained sine wave model to building a real-time image classifier on an ESP32-CAM and then connecting edge inference to cloud infrastructure. Here is what you covered:
-
-| Lesson | Skill Gained | Model Type | Platform |
-|--------|-------------|------------|----------|
-| 1 | TinyML pipeline, first deployment | Sine predictor | ESP32 |
-| 2 | Edge Impulse workflow | Motion classifier | ESP32 |
-| 3 | TFLite Micro cross-platform | Gesture classifier | ESP32, STM32 |
-| 4 | Quantization (PTQ, QAT) | Comparison bench | ESP32 |
-| 5 | Audio ML, MFCC features | Wake word CNN | ESP32 |
-| 6 | IMU data pipeline, dual-platform | Gesture dense NN | Pico, STM32 |
-| 7 | Anomaly detection, autoencoders | Vibration autoencoder | ESP32 |
-| 8 | Vision ML, PSRAM management | Person/object CNN | ESP32-CAM |
-| 9 | Edge-cloud hybrid, OTA models | Tiered inference system | ESP32 + Cloud |
+You have now run models on four kinds of signal in this course: a number series, motion, sound and images. The image model is the one that fills the memory of the chip.
 
 ### Where to Go From Here
 
-**Lesson 9: Edge-Cloud Hybrid Architectures.** The next lesson ties edge inference to cloud infrastructure. You will build a system where the ESP32 runs local classification, escalates uncertain results to the cloud for a larger model, and receives updated models via OTA. If you completed the [IoT Systems course](/education/iot-systems/), you already have the MQTT, dashboard, and REST API skills that Lesson 9 builds on.
+**Connect the device to a server.** The next lesson, [Edge-Cloud Hybrid Architectures](/education/edge-ai-tinyml/edge-cloud-hybrid-architecture/), builds a system where the ESP32 decides the clear cases itself, sends the uncertain ones to a larger model, and receives updated models over the air. The MQTT and REST skills from the [IoT Systems course](/education/iot-systems/) are useful there.
 
-**Combine modalities.** A device that runs both a wake word detector and a camera classifier can respond to voice commands with visual confirmation. The ESP32's dual cores make this feasible: one core handles audio, the other handles vision.
+**Combine two inputs.** A device that runs a wake word detector and a camera classifier can answer a spoken command with a look at the scene. The ESP32 has two cores: one can handle audio and the other vision.
 
-**Explore on-device learning.** Transfer learning on the MCU itself is an active research area. Frameworks like TinyOL (Tiny On-device Learning) allow updating the last layer's weights based on new data collected in the field, without sending data to the cloud.
+**Prepare for a product.** Look into model signing (a check that the model has not been changed), model updates over the air without reflashing the whole firmware, and power profiling (measured battery life under a realistic workload).
 
-**Scale to production.** For commercial IoT products, look into model signing (ensuring the model has not been tampered with), OTA model updates (without reflashing the entire firmware), and power profiling (measuring real battery life under realistic inference workloads).
-
-**Try different hardware.** The ESP32-S3 has vector instructions that accelerate int8 MAC operations, potentially doubling inference speed for CNN models. The Nordic nRF5340 has a dual-core Cortex-M33 with DSP extensions. Each platform offers different tradeoffs between power, performance, and connectivity.
+**Try different hardware.** The ESP32-S3 has vector instructions that speed up int8 multiply-accumulate operations, which may shorten CNN inference considerably. The Nordic nRF5340 has a dual-core Cortex-M33 with DSP extensions. Each board trades power, speed and connectivity differently.
 
 :::tip[Instrument it]
 A camera is a sensor too, and on a machine it reads what no other sensor can: an analog gauge needle, a fill level, a warning lamp, whether the right part is in the fixture. Mount it with steady, consistent lighting and a fixed view (changing light is the usual reason these models drift), classify on the device so only the result leaves and not a video stream, and you have visual monitoring that can [report a state or raise a flag](https://siliconwit.io).
@@ -1121,7 +1114,7 @@ A camera is a sensor too, and on a machine it reads what no other sensor can: an
 <InArticleAd />
 
 
-1. **Add a web server for live classification.** Extend the firmware to serve a simple web page over Wi-Fi that displays the latest camera frame (as JPEG) and the classification result. Use the ESP-IDF HTTP server component. The page should auto-refresh every 2 seconds using a meta refresh tag or JavaScript fetch.
+1. **Add a web server for live classification.** Extend the firmware to serve a simple web page over Wi-Fi that displays the latest camera frame (as JPEG) and the classification result. Use the ESP-IDF HTTP server component. The page should auto-refresh every 2 seconds using a meta refresh tag or JavaScript fetch. Images now leave the device, so keep the page on your own network and tell the people in view.
 
 2. **Build a custom 3-class classifier.** Collect 200 images each of three objects on your desk (e.g., coffee mug, water bottle, keyboard) using the ESP32-CAM's JPEG mode. Transfer the images to your PC, train a small CNN, quantize it, and deploy. Measure the accuracy difference between your custom CNN and MobileNetV1 0.25 for this specific task.
 
@@ -1136,7 +1129,9 @@ A camera is a sensor too, and on a machine it reads what no other sensor can: an
 <InArticleAd />
 
 
-You deployed image classification models on the most constrained vision platform in this course: the ESP32-CAM with its OV2640 camera and 4 MB PSRAM. A custom 4-layer CNN for person detection achieved ~89% accuracy at 5 FPS with a 30 KB quantized model. A MobileNetV1 0.25 with transfer learning handled 5-class object classification at ~86% accuracy and 1.2 FPS with a 250 KB model. PSRAM management was the central engineering challenge: the camera frame buffer and tensor arena both reside in PSRAM to keep internal SRAM free for the interpreter and task stacks. Preprocessing was straightforward (grayscale pixel shift from uint8 to int8), and the OV2640's native 96x96 output mode eliminated the need for software resizing. This lesson demonstrated that useful computer vision is possible on a microcontroller that costs a few dollars and runs on milliwatts. Lesson 9 takes this further by connecting edge inference to cloud infrastructure for tiered classification, model retraining, and OTA updates.
+You ran image classification on the ESP32-CAM with its OV2640 camera and 4 MB of PSRAM. The 4-layer CNN for person detection has 8,770 parameters. Expect a quantized file under 30 KB, about 5 frames per second and an accuracy near 89%. The MobileNetV1 0.25 model is about 250 KB and should give about 1.2 frames per second. All of these are estimates, so measure your own build.
+
+Memory decided the design. The feature maps of the first layer, not the weights, set the size of the tensor arena, and the frame buffer and the arena live in PSRAM so that internal SRAM stays free for the interpreter and the task stacks. The camera delivers 96x96 grayscale directly, so the only preprocessing is to subtract 128 from each pixel. And because the camera sees people: ask first, keep the images on the device, and send out only the result.
 
 <EdgeAiTinymlComments />
 

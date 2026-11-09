@@ -27,14 +27,14 @@ import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTi
 
 import PodcastEmbed from '../../../../components/PodcastEmbed.astro';
 
-Voice is one of the most natural interfaces for embedded devices, but streaming audio to the cloud for recognition wastes bandwidth, introduces latency, and raises privacy concerns. A wake word detector running entirely on the ESP32 listens continuously, classifies short audio windows locally, and only takes action when it hears the target phrase. This lesson builds that system end to end: microphone hardware, audio capture firmware, feature extraction, model training, and a real-time inference loop that triggers an LED and publishes an MQTT message. #KeywordSpotting #TinyML #ESP32
+A device that reacts to a spoken word must listen all the time. If it sends everything it hears to a server, it uses the network without pause, it answers late, and every conversation near it leaves the room. A wake word detector avoids all three. It listens on the microcontroller, classifies one second of sound at a time, and acts only when it hears its word. This lesson builds one: the microphone wiring, the capture firmware, the feature extraction that turns sound into numbers a small model can use, the training, and the loop that lights an LED and publishes a message. #KeywordSpotting #TinyML #ESP32
 
 <PodcastEmbed src="https://open.spotify.com/episode/7iMHvUA2R84z83DVNuBxZ3?si=4El8yOw9SwuDoMZQhDHc1Q" />
 
 ## What We Are Building
 
-<Card title="Hey Device Wake Word Detector" icon="star">
-A voice-activated trigger that listens for the keyword "yes" (from Google's Speech Commands dataset) using an INMP441 I2S MEMS microphone connected to an ESP32. When the keyword is detected with confidence above a threshold, the ESP32 lights an LED and optionally publishes an MQTT message. All inference runs on the MCU with no cloud dependency.
+<Card title="Wake Word Detector" icon="star">
+A trigger that listens for the word "yes" (from Google's Speech Commands dataset) with an INMP441 digital microphone connected to an ESP32. When the model reports the word with a score above a threshold, the ESP32 lights an LED and can publish an MQTT message. All inference runs on the MCU, with no server.
 </Card>
 
 **Project specifications:**
@@ -46,7 +46,7 @@ A voice-activated trigger that listens for the keyword "yes" (from Google's Spee
 | Audio format | 16 kHz, 16-bit mono |
 | Window length | 1 second (16000 samples) |
 | Feature extraction | 13 MFCCs, 32 ms frames, 16 ms hop |
-| Model | Small CNN (Conv1D), ~20 KB quantized |
+| Model | Small CNN (Conv1D), ~27 KB quantized (estimate) |
 | Classes | "yes", "no", "unknown", "silence" |
 | Inference time | < 100 ms on ESP32 at 240 MHz |
 | Detection LED | GPIO 2 (onboard) |
@@ -60,80 +60,51 @@ A voice-activated trigger that listens for the keyword "yes" (from Google's Spee
 | M1 | INMP441 I2S MEMS microphone breakout | 1 | I2S output, 3.3V compatible |
 | | Breadboard + jumper wires | 1 set | |
 
-```text
-  Audio Feature Extraction Pipeline
-  ──────────────────────────────────────────
-  INMP441 Mic    Framing        MFCC
-  (16 kHz) ──►  32ms windows ──► 13 coefficients
-                16ms hop          per frame
-                                     │
-                                     ▼
-                              ┌──────────────┐
-                              │ Spectrogram  │
-                              │ 62 frames x  │
-                              │ 13 MFCCs     │
-                              │ = 806 values │
-                              └──────┬───────┘
-                                     │
-                                     ▼
-                              ┌──────────────┐
-                              │ CNN (Conv1D) │
-                              │ ~20 KB int8  │
-                              └──────┬───────┘
-                                     │
-                            ┌────────┼────────┐
-                            ▼        ▼        ▼
-                          "yes"   "no"   "unknown"
-```
-
 ## Audio ML on Microcontrollers
 
 <InArticleAd />
 
 
-```text
-  Sliding Window Detection Loop
-  ──────────────────────────────────────────
-  Audio stream (continuous):
-  ──────────────────────────────────────►
-  │    1s window    │
-  ├─────────────────┤
-       │    1s window    │  (hop = 500ms)
-       ├─────────────────┤
-            │    1s window    │
-            ├─────────────────┤
-
-  Each window: extract MFCCs ──► classify
-  If P("yes") > 0.85 for 2 consecutive
-  windows ──► DETECTED (reduces false alarms)
-```
+Sound classification on a microcontroller has three stages. A digital microphone delivers samples. Feature extraction reduces each second of samples to a small table of numbers that says which frequencies were strong at which moment. A small neural network then chooses a class from that table.
 
 ```mermaid
 flowchart TD
     A[Mic captures\n16 kHz audio] --> B[Frame into\n32 ms windows]
     B --> C[Extract MFCCs\n13 coefficients/frame]
-    C --> D[Build spectrogram\n62 frames x 13]
-    D --> E[CNN classifies\nyes / no / unknown]
-    E --> F{Confidence\nabove 0.85?}
+    C --> D[Build feature table\n61 frames x 13]
+    D --> E[CNN classifies\nyes / no / unknown / silence]
+    E --> F{Score for yes\nabove 0.75?}
     F -- 2 consecutive --> G[DETECTED]
     F -- No --> A
 ```
 
-Speech and audio classification on MCUs follows a consistent pipeline. Raw audio samples come in from a digital microphone. A feature extraction stage converts the time-domain waveform into a compact spectral representation (typically MFCCs or log-mel spectrograms). A small neural network classifies the feature matrix into one of several categories. The entire pipeline must complete within the audio window duration to maintain real-time operation.
+The firmware of this lesson records one second, classifies it, and records the next second:
 
-The key constraints on an ESP32:
-- **RAM:** ~520 KB total SRAM. The audio buffer, feature matrix, model weights, and interpreter arena all compete for this space.
-- **Flash:** Up to 4 MB. The quantized model and firmware share this.
-- **CPU:** Dual-core Xtensa LX6 at 240 MHz. MFCC extraction is compute-intensive but feasible at 16 kHz sample rates.
+```text
+  Audio stream (continuous):
+  ──────────────────────────────────────────────►
+  ├── 1 s window ──┼── 1 s window ──┼── 1 s window ──┤
+          │                │                │
+          ▼                ▼                ▼
+      classify         classify         classify
 
-We use 16 kHz sampling because the Speech Commands dataset is recorded at 16 kHz and human speech energy relevant to keyword detection sits below 8 kHz (the Nyquist frequency at this sample rate).
+  score for "yes" above 0.75 in 2 windows in a row
+  ──► DETECTED
+```
+
+The limits on an ESP32:
+- RAM: about 520 KB. The audio buffer (32 KB), the feature table (about 3 KB) and the tensor arena (40 KB reserved) share it. The weights stay in flash.
+- Flash: up to 4 MB, shared by the quantized model and the firmware.
+- CPU: two cores at 240 MHz. The computing for one second of sound must take less than one second, or the device falls behind.
+
+We sample at 16 kHz because the Speech Commands dataset is recorded at that rate. It can represent frequencies up to 8 kHz, half the rate, and the parts of speech that distinguish words lie below that.
 
 ## I2S Microphone Hardware Setup
 
 <InArticleAd />
 
 
-The INMP441 is a digital MEMS microphone with an I2S output interface. Unlike analog microphones that require an ADC, the INMP441 outputs a digital bitstream directly, which the ESP32's I2S peripheral reads without any external codec.
+The INMP441 is a MEMS microphone (a microphone etched in silicon) with a digital output. It sends its samples over I2S, a three-wire serial bus made for audio. The I2S peripheral of the ESP32 reads them directly, so no analog-to-digital converter (ADC) and no amplifier are needed.
 
 ### Wiring
 
@@ -146,18 +117,18 @@ The INMP441 is a digital MEMS microphone with an I2S output interface. Unlike an
 | GND | GND | Common ground |
 | GND | L/R | Tie to GND for left channel |
 
-The L/R pin selects which channel the microphone outputs on. Tying it to GND selects the left channel. If you tie it to VDD, the mic outputs on the right channel instead. For a single-mic setup, left channel is the convention.
+The L/R pin selects the channel on which the microphone sends. Connected to GND it sends on the left channel, and connected to VDD on the right. With one microphone, the left channel is the usual choice.
 
 ### Why I2S Instead of Analog?
 
-An analog electret microphone connected to the ESP32's ADC would work for basic audio capture, but it introduces noise from the ADC conversion, requires an amplifier circuit, and the ADC on the ESP32 is only 12-bit. The INMP441 outputs 24-bit digital audio with a built-in anti-aliasing filter and much higher signal-to-noise ratio (SNR of 61 dBA). For ML applications where clean audio directly affects classification accuracy, the I2S mic is the right choice.
+An analog electret microphone on the ADC of the ESP32 needs an amplifier circuit, and the 12-bit ADC adds noise. The INMP441 sends 24-bit samples, filters out frequencies too high for the sample rate, and has a signal-to-noise ratio (SNR) of 61 dBA. A model classifies clean sound more accurately, so the I2S microphone is the better choice.
 
 ## Audio Capture Firmware
 
 <InArticleAd />
 
 
-The following ESP-IDF code configures the I2S peripheral, captures 1-second audio windows, and stores them in a buffer for processing.
+The following ESP-IDF code configures the I2S peripheral and captures 1-second windows of sound into a buffer.
 
 ### I2S Configuration and Capture
 
@@ -187,7 +158,7 @@ static const char *TAG = "wake_word";
 
 /* Detection */
 #define DETECTION_THRESHOLD  0.75f
-#define LED_PIN              2
+#define LED_PIN              GPIO_NUM_2
 
 static i2s_chan_handle_t s_rx_chan = NULL;
 static int16_t s_audio_buffer[AUDIO_BUFFER_LEN];
@@ -263,29 +234,31 @@ static esp_err_t capture_audio_window(int16_t *out_buf, size_t num_samples)
 }
 ```
 
-The INMP441 outputs 24-bit audio left-justified in a 32-bit I2S frame. We read the full 32-bit values and shift right by 16 to extract the top 16 bits, which gives us a signed 16-bit PCM sample. This is a common pattern with I2S MEMS microphones on the ESP32.
+The INMP441 puts each 24-bit sample at the top of a 32-bit I2S frame. We read the 32-bit values and shift them right by 16 to keep the top 16 bits, which gives a signed 16-bit sample.
 
-The DMA configuration uses 8 descriptors with 512 frames each, providing enough buffering to prevent underruns during the feature extraction phase. At 16 kHz, one second of audio is 16000 samples (32 KB of int16 data), which fits comfortably in the ESP32's SRAM.
+The microphone does not stop while the processor computes. The I2S driver therefore receives through DMA (direct memory access, hardware that stores incoming data without the CPU) into 8 buffers of 512 samples. They hold 256 ms of sound, which covers the time spent on feature extraction and inference. One second of sound is 16000 samples, or 32 KB as int16.
 
 ## Feature Extraction: MFCC on Device
 
 <InArticleAd />
 
 
-Raw audio waveforms are not suitable as direct input to small neural networks. The standard approach for audio ML is to extract Mel-frequency cepstral coefficients (MFCCs), which compress the spectral content of each short frame into a small vector of typically 13 coefficients.
+A small model cannot learn from the raw samples. One second is 16000 numbers, and the same word spoken twice gives different numbers at almost every sample, because the timing never repeats exactly. What does repeat is the pattern of strong and weak frequencies over time. Feature extraction computes that pattern. It cuts the second into 61 overlapping frames and describes each by 13 numbers called MFCCs (mel-frequency cepstral coefficients). The model receives 793 numbers in place of 16000, and they change little when the word comes a little earlier or louder.
 
 ### MFCC Pipeline
 
-The MFCC computation follows these steps for each frame:
+Each frame of 512 samples (32 ms) goes through six steps:
 
-1. **Pre-emphasis:** Apply a high-pass filter to boost high frequencies: `y[n] = x[n] - 0.97 * x[n-1]`
-2. **Windowing:** Multiply each frame by a Hann window to reduce spectral leakage
-3. **FFT:** Compute the magnitude spectrum using a 512-point FFT
-4. **Mel filterbank:** Apply 26 triangular filters spaced on the mel scale
-5. **Log energy:** Take the logarithm of each filterbank output
-6. **DCT:** Apply a discrete cosine transform and keep the first 13 coefficients
+1. Pre-emphasis. Speech is weaker at high frequencies, where the consonants are. A simple filter raises them: `y[n] = x[n] - 0.97 * x[n-1]`.
+2. Windowing. The frame is multiplied by a Hann window, a curve that fades it in and out, so that its cut ends do not appear as false frequencies.
+3. FFT. A 512-point fast Fourier transform gives the strength of 257 frequencies in the frame.
+4. Mel filterbank. The 257 values are added into 26 bands. The bands are narrow at low frequencies and wide at high ones, as in human hearing (the mel scale).
+5. Log energy. The logarithm of each band is taken. A louder voice then only adds the same amount to every band, and the pattern stays the same.
+6. DCT. A discrete cosine transform describes the shape of the 26 band values, and the first 13 of its outputs are kept. These are the MFCCs.
 
 ### C Implementation
+
+The firmware must compute the features exactly as the training script does: the same sample scale, window, log floor and DCT. If one step differs, the model receives numbers it was never trained on. Two parts of this listing are placeholders that you replace: the filterbank table and the FFT.
 
 ```c
 /* MFCC parameters */
@@ -312,8 +285,9 @@ static float s_hann_window[FRAME_LEN];
 static void precompute_hann_window(void)
 {
     for (int i = 0; i < FRAME_LEN; i++) {
+        /* Periodic Hann window, the same one tf.signal.stft uses */
         s_hann_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i
-                                                  / (FRAME_LEN - 1)));
+                                                  / FRAME_LEN));
     }
 }
 
@@ -333,7 +307,6 @@ static void fft_magnitude(const float *input, float *magnitude, int n)
        dsps_fft2r_init_fc32(NULL, FFT_SIZE);
        dsps_fft2r_fc32(real, FFT_SIZE);
        dsps_bit_rev_fc32(real, FFT_SIZE);
-       dsps_cplx2reC_fc32(real, FFT_SIZE);
     */
 
     for (int i = 0; i <= n / 2; i++) {
@@ -352,11 +325,12 @@ static void extract_mfcc(const int16_t *audio, float mfcc_out[][NUM_MFCC])
     for (int f = 0; f < NUM_FRAMES; f++) {
         int offset = f * FRAME_STEP;
 
-        /* Pre-emphasis and windowing */
-        frame[0] = (float)audio[offset] * s_hann_window[0];
-        for (int i = 1; i < FRAME_LEN; i++) {
-            float sample = (float)audio[offset + i]
-                           - 0.97f * (float)audio[offset + i - 1];
+        /* Pre-emphasis and windowing. Samples are scaled to [-1, 1],
+           the same scale the training script gets from decode_wav. */
+        for (int i = 0; i < FRAME_LEN; i++) {
+            int n = offset + i;
+            float prev = (n > 0) ? (float)audio[n - 1] : 0.0f;
+            float sample = ((float)audio[n] - 0.97f * prev) / 32768.0f;
             frame[i] = sample * s_hann_window[i];
         }
 
@@ -370,7 +344,7 @@ static void extract_mfcc(const int16_t *audio, float mfcc_out[][NUM_MFCC])
                 mel_energy[m] += MEL_FILTERBANK[m][k] * magnitude[k];
             }
             /* Log energy (floor to avoid log(0)) */
-            dct_input[m] = logf(mel_energy[m] + 1e-10f);
+            dct_input[m] = logf(mel_energy[m] + 1e-6f);
         }
 
         /* DCT-II to get MFCCs */
@@ -380,7 +354,8 @@ static void extract_mfcc(const int16_t *audio, float mfcc_out[][NUM_MFCC])
                 sum += dct_input[m] * cosf(M_PI * c * (m + 0.5f)
                                             / NUM_MEL_BINS);
             }
-            mfcc_out[f][c] = sum;
+            /* Same scaling as tf.signal.mfccs_from_log_mel_spectrograms */
+            mfcc_out[f][c] = sum * sqrtf(2.0f / NUM_MEL_BINS);
         }
     }
 }
@@ -388,7 +363,7 @@ static void extract_mfcc(const int16_t *audio, float mfcc_out[][NUM_MFCC])
 
 ### Using ESP-DSP for Performance
 
-The placeholder FFT above is intentionally simplified. For real-time performance, use the ESP-DSP library which provides hardware-optimized FFT routines:
+The function `fft_magnitude` above shows only the interface and does not compute an FFT. Replace its body with the FFT of the ESP-DSP library, which is optimized for the ESP32:
 
 ```c
 #include "dsps_fft2r.h"
@@ -405,7 +380,6 @@ for (int i = 0; i < FFT_SIZE; i++) {
 }
 dsps_fft2r_fc32(fft_buf, FFT_SIZE);
 dsps_bit_rev_fc32(fft_buf, FFT_SIZE);
-dsps_cplx2reC_fc32(fft_buf, FFT_SIZE);
 
 for (int i = 0; i <= FFT_SIZE / 2; i++) {
     magnitude[i] = sqrtf(fft_buf[i * 2] * fft_buf[i * 2]
@@ -425,7 +399,7 @@ dependencies:
 <InArticleAd />
 
 
-We train the model on your PC using TensorFlow and Google's Speech Commands v2 dataset. The dataset contains 105,000 one-second utterances of 35 keywords, recorded by thousands of contributors. We select "yes" as our wake word and group the remaining keywords into "unknown" and "silence" classes.
+We train the model on your PC with TensorFlow and Google's Speech Commands v2 dataset. The dataset holds 105,000 one-second recordings of 35 words, spoken by thousands of people. "yes" is our wake word. The model also needs an answer for everything else it will hear, so it has three more classes: "no", "unknown" (eight other words) and "silence" (quiet background noise).
 
 ### Dataset Preparation
 
@@ -447,7 +421,7 @@ NEGATIVE_KEYWORD = 'no'
 NUM_MFCC = 13
 FRAME_LENGTH = 512
 FRAME_STEP = 256
-NUM_FRAMES = 62  # (16000 - 512) / 256 + 1
+NUM_FRAMES = 61  # (16000 - 512) // 256 + 1
 
 def decode_audio(file_path):
     """Load a WAV file and return float32 samples."""
@@ -464,6 +438,9 @@ def decode_audio(file_path):
 
 def extract_mfcc_tf(waveform):
     """Extract MFCCs using TensorFlow signal processing."""
+    # Pre-emphasis, the same filter the firmware applies
+    waveform = tf.concat(
+        [waveform[:1], waveform[1:] - 0.97 * waveform[:-1]], axis=0)
     stft = tf.signal.stft(waveform,
                           frame_length=FRAME_LENGTH,
                           frame_step=FRAME_STEP)
@@ -506,7 +483,7 @@ print(f"yes: {len(yes_files)}, no: {len(no_files)}, "
 
 ### Model Architecture
 
-The classifier uses a small 1D CNN that takes the MFCC matrix (62 frames x 13 coefficients) as input. The architecture is designed to fit within the ESP32's memory budget after int8 quantization.
+The classifier is a small 1D convolutional network (CNN). Its input is the MFCC table of 61 frames by 13 coefficients. Its convolution layers slide along the time axis, so they find a sound pattern wherever it lies in the second. Batch normalization rescales the outputs of a layer during training. It accounts for the 320 non-trainable parameters in the summary.
 
 ```python
 from tensorflow import keras
@@ -556,9 +533,9 @@ model.summary()
 Expected model summary output:
 
 ```
-Total params: 15,456
-Trainable params: 15,200
-Non-trainable params: 256
+Total params: 22,692
+Trainable params: 22,372
+Non-trainable params: 320
 ```
 
 ### Training and Validation
@@ -607,7 +584,9 @@ ds_silence = tf.data.Dataset.from_tensor_slices(
 
 # Combine and shuffle
 full_ds = ds_yes.concatenate(ds_no).concatenate(ds_unknown).concatenate(ds_silence)
-full_ds = full_ds.shuffle(10000)
+# Shuffle once only. A new shuffle on every epoch would move samples
+# between the train, validation and test parts.
+full_ds = full_ds.shuffle(10000, reshuffle_each_iteration=False)
 
 # Split 80/10/10
 total = len(yes_files) + len(no_files) + len(unknown_files) + len(silence_data)
@@ -633,7 +612,7 @@ test_loss, test_acc = model.evaluate(test_ds)
 print(f"Test accuracy: {test_acc:.4f}")
 ```
 
-You should see test accuracy above 90% after training. The "yes" class typically achieves higher precision because it has the most training examples in the Speech Commands dataset.
+You should see a test accuracy above 90% after training. The "yes" class is usually recognised best, because it has the most examples in this training set.
 
 ## Converting and Deploying
 
@@ -664,7 +643,7 @@ model_path.write_bytes(tflite_model)
 print(f"Quantized model size: {len(tflite_model)} bytes")
 ```
 
-The quantized model should be approximately 18 to 22 KB, well within the ESP32's flash budget.
+The file size was not measured for this lesson. We estimate 25 to 30 KB: the 22,692 parameters take about 22 KB at one byte each, and the rest describes the layers. That is a small part of the flash of an ESP32. The script prints the real size.
 
 ### Converting to C Header
 
@@ -672,7 +651,7 @@ The quantized model should be approximately 18 to 22 KB, well within the ESP32's
 xxd -i wake_word_model.tflite > wake_word_model.h
 ```
 
-This generates a C array that you include directly in the firmware:
+This generates a C array that you include in the firmware. The length 27136 below is an example:
 
 ```c
 /* wake_word_model.h (auto-generated by xxd) */
@@ -680,12 +659,12 @@ unsigned char wake_word_model_tflite[] = {
     0x20, 0x00, 0x00, 0x00, 0x54, 0x46, 0x4c, 0x33,
     /* ... model bytes ... */
 };
-unsigned int wake_word_model_tflite_len = 19456;
+unsigned int wake_word_model_tflite_len = 27136;
 ```
 
 ### Generate Mel Filterbank Constants
 
-Use this Python script to generate the C array for the mel filterbank used in the on-device MFCC extraction:
+This Python script prints the C array of the 26 mel bands for the on-device MFCC extraction. It replaces the placeholder table in the firmware:
 
 ```python
 import numpy as np
@@ -735,7 +714,7 @@ generate_mel_filterbank_c()
 <InArticleAd />
 
 
-This is the main inference loop that ties everything together. It continuously captures audio, extracts features, runs the model, and acts on detections.
+The main loop repeats four actions: capture one second of sound, extract the features, run the model, and act on a detection. The 40 KB tensor arena is a generous first size. Read the log line "arena used" and reduce it.
 
 ```c
 #include "tensorflow/lite/micro/micro_interpreter.h"
@@ -773,8 +752,13 @@ static void tflm_init(void)
         return;
     }
 
-    static tflite::MicroMutableOpResolver<6> resolver;
+    static tflite::MicroMutableOpResolver<8> resolver;
     resolver.AddConv2D();
+    /* Conv1D and MaxPool1D run as 2D ops. The converter wraps them in
+       EXPAND_DIMS and SQUEEZE ops, or in RESHAPE ops, depending on the
+       TensorFlow version, so register all three. */
+    resolver.AddExpandDims();
+    resolver.AddSqueeze();
     resolver.AddReshape();
     resolver.AddFullyConnected();
     resolver.AddMaxPool2D();
@@ -805,7 +789,7 @@ static int run_inference(float mfcc[][NUM_MFCC], float *confidence)
     for (int f = 0; f < NUM_FRAMES; f++) {
         for (int c = 0; c < NUM_MFCC; c++) {
             float val = mfcc[f][c];
-            int32_t quantized = (int32_t)(val / input_scale) + input_zero_point;
+            int32_t quantized = (int32_t)roundf(val / input_scale) + input_zero_point;
             if (quantized < -128) quantized = -128;
             if (quantized > 127) quantized = 127;
             input_data[f * NUM_MFCC + c] = (int8_t)quantized;
@@ -887,26 +871,28 @@ static void keyword_detection_task(void *arg)
 }
 ```
 
-The detection loop uses a consecutive confirmation strategy: it requires two back-to-back positive classifications before triggering an action. This dramatically reduces false positives while adding only one second of latency. For a wake word detector that runs continuously, this tradeoff is well worth it.
+The loop acts only after two windows in a row are classified as "yes". This removes most false detections and adds one second of delay. Each cycle is one second of recording plus the computing time that the log prints: in the sample output further down, 45 ms for the features and 32 ms for the model.
+
+These windows do not overlap, and a short word usually falls inside one of them. This firmware therefore reacts when the word is heard in two windows in a row, for example "yes, yes". With overlapping windows, as in exercise 2, one spoken word appears in two windows, and a single "yes" is enough.
 
 ## Handling False Positives
 
 <InArticleAd />
 
 
-False positives are the primary usability concern for always-listening keyword detectors. Several techniques reduce them:
+A false positive is a detection when nobody said the word. Four methods reduce it.
 
-**1. Consecutive detection requirement.** As shown in the code above, requiring two (or three) consecutive positive windows eliminates most spurious triggers. A random noise burst might briefly match the keyword, but it is unlikely to persist for two full seconds.
+**1. Consecutive detections.** Require two (or three) positive windows in a row, as in the code above. A short noise may resemble the word once, but rarely twice.
 
-**2. Confidence threshold tuning.** The `DETECTION_THRESHOLD` value determines the sensitivity/specificity tradeoff. Start at 0.75 and adjust based on your deployment environment:
+**2. Threshold.** `DETECTION_THRESHOLD` is the score the "yes" class must pass. A higher value gives fewer false detections and more missed words. Start at 0.75 and adjust it in the place where the device will work:
 
 | Threshold | Behavior |
 |-----------|----------|
-| 0.5 | High sensitivity, more false positives. Good for quiet rooms. |
+| 0.5 | Sensitive, more false positives. Good for quiet rooms. |
 | 0.75 | Balanced. Recommended starting point. |
-| 0.9 | Very few false positives, but may miss some valid keywords. |
+| 0.9 | Very few false positives, but some spoken words are missed. |
 
-**3. Noise-aware training.** During training, augment the dataset by adding background noise at various SNR levels. TensorFlow's `tf.audio` utilities support this:
+**3. Training with noise.** Add background noise to the training recordings at several signal-to-noise ratios, so that the model has heard the word in noise before:
 
 ```python
 def add_noise(waveform, noise, snr_db=10):
@@ -914,10 +900,10 @@ def add_noise(waveform, noise, snr_db=10):
     signal_power = tf.reduce_mean(tf.square(waveform))
     noise_power = tf.reduce_mean(tf.square(noise))
     scale = tf.sqrt(signal_power / (noise_power * 10 ** (snr_db / 10)))
-    return waveform + noise / scale
+    return waveform + noise * scale
 ```
 
-**4. Silence gating.** Before running inference, check the RMS energy of the audio window. If it falls below a threshold (indicating silence or very low ambient noise), skip inference entirely to save power.
+**4. Silence gate.** Before inference, compute the RMS (root mean square, an average size) of the window. If it is below a threshold, the room is quiet: skip the feature extraction and the inference, which also saves power.
 
 ```c
 static float compute_rms(const int16_t *audio, size_t len)
@@ -942,6 +928,8 @@ if (rms < 0.01f) {
 
 <InArticleAd />
 
+
+A detection is the model's opinion, and it is sometimes wrong. Use it for actions that are safe to do by mistake and safe to miss: a light, a message, waking a display. If a spoken word ever starts a machine, the limits that protect people and equipment stay as plain rules in the firmware and in hardware, and a stop button never depends on the model.
 
 ### LED Feedback
 
@@ -1019,7 +1007,7 @@ if (consecutive_detections >= 2) {
 <InArticleAd />
 
 
-An always-listening keyword detector can run from a battery if you manage power carefully.
+A detector that always listens always draws current. It can still run from a battery if it sleeps between windows.
 
 | Mode | Current Draw | Duration | Notes |
 |------|-------------|----------|-------|
@@ -1029,7 +1017,7 @@ An always-listening keyword detector can run from a battery if you manage power 
 
 ### Duty-Cycled Listening
 
-Instead of running the microphone continuously, you can implement a listen/sleep cycle:
+In place of continuous listening, the device can listen for one second and then sleep:
 
 ```c
 static void duty_cycled_detection(void *arg)
@@ -1064,7 +1052,7 @@ static void duty_cycled_detection(void *arg)
 }
 ```
 
-This approach reduces average current from ~80 mA to ~20 mA at the cost of potentially missing keywords that occur during sleep intervals. For applications where immediate response is not critical (e.g., a voice-controlled thermostat), this is an acceptable tradeoff.
+With 1 second of listening at ~80 mA and 0.5 second of light sleep at ~2 mA, the average current is $\frac{80 \times 1 + 2 \times 0.5}{1.5} \approx 54\,\text{mA}$. A longer sleep lowers it further (about 3.3 seconds of sleep per cycle gives ~20 mA). The price is that a word spoken during the sleep is missed. Where an immediate response is not needed, such as a thermostat that takes voice commands, this is acceptable.
 
 ## Project File Structure
 
@@ -1139,7 +1127,7 @@ dependencies:
    idf.py -p /dev/ttyUSB0 flash monitor
    ```
 
-7. Speak "yes" near the INMP441 microphone. You should see:
+7. Say "yes" near the INMP441 microphone, twice, about one second apart. You should see:
    ```
    I (12345) wake_word: Class: yes (0.92), MFCC: 45000 us, Infer: 32000 us
    I (12345) wake_word: Class: yes (0.89), MFCC: 44000 us, Infer: 31000 us
@@ -1149,7 +1137,7 @@ dependencies:
 </Steps>
 
 :::tip[Instrument it]
-The same wake-word pipeline is how a machine listens to itself. A failing bearing, a cavitating pump, a leaking valve, and an arcing contact each have an acoustic signature, and a tiny model on a microphone can learn to spot it just like a keyword. Mount the [microphone](/education/sensor-actuator-interfacing-stm32/) close to the source and shielded from wind and handling noise, classify on-device so only the detection leaves, and the machine can [call out its own faults](https://siliconwit.io) by the sound it makes.
+The same chain can listen to a machine. A worn bearing, a pump that cavitates, a leaking valve and an arcing contact each make a typical sound, and a small model can learn it as it learns a word. Mount the [microphone](/education/sensor-actuator-interfacing-stm32/) close to the source and shield it from wind and from knocks. Classify on the device, so that only the detection leaves it, and [report the fault](https://siliconwit.io) for a person to check.
 :::
 
 ## Exercises
@@ -1170,7 +1158,14 @@ The same wake-word pipeline is how a machine listens to itself. A failing bearin
 <InArticleAd />
 
 
-You built an end-to-end keyword spotting system: an INMP441 I2S MEMS microphone captures 16 kHz audio on the ESP32, firmware extracts 13 MFCCs per frame, a small Conv1D classifier (trained on Google's Speech Commands dataset) runs inference in under 100 ms, and a consecutive-detection filter eliminates false positives before triggering an LED or publishing an MQTT event. The quantized model occupies roughly 20 KB of flash, and the entire inference pipeline fits within the ESP32's 520 KB of SRAM. Power management techniques like silence gating and duty-cycled listening extend battery life for portable deployments.
+You built a complete keyword detector:
+
+- An INMP441 I2S microphone delivers sound at 16 kHz to the ESP32.
+- The firmware reduces each second to 61 frames of 13 MFCCs, computed exactly as in training.
+- A small Conv1D classifier, trained on the Speech Commands dataset, runs inference in under 100 ms.
+- Two detections in a row are required before the LED lights or an MQTT event is published.
+
+The quantized model is estimated at 25 to 30 KB of flash. A silence gate and a listen and sleep cycle extend the battery life.
 
 <EdgeAiTinymlComments />
 

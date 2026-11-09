@@ -27,28 +27,25 @@ import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTi
 
 import PodcastEmbed from '../../../../components/PodcastEmbed.astro';
 
-Buttons wear out, touchscreens add cost and complexity, and neither works well when the user is wearing gloves or the device is sealed inside an enclosure. An accelerometer costs under a dollar, has no moving parts, and can distinguish dozens of distinct gestures with a small neural network running entirely on the MCU. This lesson walks through the full pipeline: collecting labeled IMU data from an MPU6050, training a gesture classifier in TensorFlow, deploying TFLite Micro models on both the RPi Pico and STM32, and comparing inference latency, memory footprint, and power consumption across both platforms. #GestureRecognition #TinyML #EmbeddedML
+Buttons wear out, and a touchscreen adds cost and fails with gloves or inside a sealed enclosure. An accelerometer costs less than one US dollar, has no moving parts, and can tell a few hand movements apart. Writing that by hand as `if` statements on raw readings fails quickly, because no two shakes are the same. So you record examples and let a computer fit a model: a rule with adjustable numbers that turns one second of sensor readings into the name of a gesture. This lesson covers the whole path: recording labelled data from an MPU6050, training a classifier in TensorFlow, running it with TFLite Micro on an RPi Pico and an STM32, and comparing the two boards. #GestureRecognition #TinyML #EmbeddedML
 
 <PodcastEmbed src="https://open.spotify.com/episode/2nqmzlOxX6suAfDOQZc4Ie?si=7JJ9Y1DvT1aH-xh5ZRQuyg" />
 
 ```text
-  Data Collection to Deployment
+  From recorded data to a running device
   ──────────────────────────────────────────
-  1. Collect (MicroPython on Pico)
-     shake: 50 samples x 6 axes x 100 Hz
-     tilt:  50 samples
-     tap:   50 samples
-     circle: 50 samples
+  1. Record (MicroPython on Pico)
+     50 one-second windows per gesture:
+     shake, tilt, tap, circle
         │
   2. Train (TensorFlow on PC)
-     Dense NN: 600 ► 64 ► 32 ► 4
-     Accuracy: ~95% on test set
+     network: 600 ► 64 ► 32 ► 4
         │
-  3. Quantize + Convert
-     float32 (32 KB) ──► int8 (8 KB)
+  3. Quantize and convert
+     float32 (~165 KB) ► int8 (~43 KB)
         │
-  4. Deploy to Pico (C SDK) AND STM32 (HAL)
-     Same .tflite, different platform code
+  4. Run on Pico (C SDK) and STM32 (HAL)
+     same .tflite, different platform code
 ```
 
 ## What We Are Building
@@ -65,7 +62,7 @@ A wearable or handheld device that recognizes four gestures (shake, tilt, tap, c
 | Sample rate | 100 Hz |
 | Window length | 1 second (100 samples x 6 axes) |
 | Gestures | shake, tilt, tap, circle |
-| Model | Dense NN, ~8 KB quantized |
+| Model | Dense NN, about 43 KB quantized (estimated from the parameter count) |
 | Target MCUs | RPi Pico (RP2040) and STM32F4 |
 | Output | LED color/pattern per gesture, MQTT publish |
 
@@ -80,26 +77,21 @@ A wearable or handheld device that recognizes four gestures (shake, tilt, tap, c
 | | Breadboard + jumper wires | 1 set | |
 
 ```text
-  Gesture Recognition Pipeline
+  What the chip does, once a second
   ──────────────────────────────────────────
-  MPU6050       Collect         Preprocess
-  (100 Hz) ──► 1s window ──► Normalize to
-  ax,ay,az     (100 x 6       [-1, 1]
-  gx,gy,gz      = 600 vals)      │
-                                  ▼
-                            ┌───────────┐
-                            │ Dense NN  │
-                            │ 600 ► 64  │
-                            │  64 ► 32  │
-                            │  32 ► 4   │
-                            └─────┬─────┘
-                                  │
-                    ┌─────────────┼──────────┐
-                    ▼             ▼          ▼
-                 shake         tilt       circle
-                 (0.92)       (0.04)     (0.03)
-                   ▲
-                   └── highest = prediction
+  MPU6050        1 s window       scale each
+  (100 Hz)  ──►  100 x 6     ──►  axis as in
+  ax,ay,az       = 600 values     training
+  gx,gy,gz                           │
+                                     ▼
+                       ┌───────────────────┐
+                       │ 600 ► 64 ► 32 ► 4 │
+                       └─────────┬─────────┘
+               ┌────────┬────────┴┬────────┐
+               ▼        ▼         ▼        ▼
+             shake     tilt      tap     circle
+             0.92      0.04      0.01     0.03
+             highest score = the answer
 ```
 
 ## Gesture Recognition Pipeline
@@ -107,40 +99,36 @@ A wearable or handheld device that recognizes four gestures (shake, tilt, tap, c
 <InArticleAd />
 
 
-The pipeline consists of four stages that map directly to the lesson structure:
+You cannot tell a program what a shake looks like, so you show it examples. The work has four stages:
 
 <Steps>
-1. **Data Collection.** The MPU6050 streams accelerometer and gyroscope readings at 100 Hz. Each gesture sample is a 1-second window of 6-axis data (100 x 6 = 600 values). We collect 50 or more samples per gesture class.
+1. **Record.** The MPU6050 gives six readings 100 times a second: acceleration on three axes and rotation rate on three axes. One example is a 1-second window, so 100 x 6 = 600 numbers. You record 50 or more windows of each gesture.
 
-2. **Labeling and Preprocessing.** Each captured window is saved to a CSV file with a label. A Python script normalizes the data, splits it into train/validation/test sets, and converts it into NumPy arrays.
+2. **Label and prepare.** Each window is saved to a CSV file in a folder named after its gesture. The folder name is the label. A Python script scales the data and sets part of it aside for testing.
 
-3. **Training.** A small dense neural network (two hidden layers) learns to map the 600-dimensional input to one of four gesture classes. Training takes under a minute on a CPU.
+3. **Train.** A small neural network with two hidden layers is fitted so that the 600 numbers of a window give the right gesture name. Training takes under a minute on a PC.
 
-4. **Deployment.** The trained model is quantized to int8, converted to a C array, and embedded in firmware for both the Pico and STM32. Each platform runs the same model but uses its own HAL for I2C and GPIO.
+4. **Deploy.** The trained model is quantized to int8 (each of its numbers is stored in one byte), converted to a C array, and built into firmware for the Pico and the STM32. Both run the same model. Only the I2C and GPIO code differs.
 </Steps>
+
+Two limits follow from this design, and both surprise people:
+
+- **The model sees one window and nothing else.** A gesture that starts late is cut in two by the edge of the window, and neither half looks like the training examples.
+- **The model always answers.** Its four scores add up to 1, so it names a gesture even when the device lies still. The firmware acts only when the best score is above 0.6, which hides most of these wrong answers, not all. The cure is a fifth class of recorded "no gesture" windows.
 
 ## Hardware Setup
 
 <InArticleAd />
 
 
-### MPU6050 on RPi Pico
+The sensor needs four wires on either board:
 
-| Pico Pin | MPU6050 Pin | Notes |
-|----------|-------------|-------|
-| GP4 (SDA) | SDA | I2C0 data |
-| GP5 (SCL) | SCL | I2C0 clock |
-| 3V3 | VCC | Power supply |
-| GND | GND | Common ground |
-
-### MPU6050 on STM32F4
-
-| STM32 Pin | MPU6050 Pin | Notes |
-|-----------|-------------|-------|
-| PB7 (SDA) | SDA | I2C1 data |
-| PB6 (SCL) | SCL | I2C1 clock |
-| 3.3V | VCC | Power supply |
-| GND | GND | Common ground |
+| MPU6050 Pin | RPi Pico | STM32F4 |
+|-------------|----------|---------|
+| SDA (data) | GP4 (I2C0) | PB7 (I2C1) |
+| SCL (clock) | GP5 (I2C0) | PB6 (I2C1) |
+| VCC | 3V3 | 3.3V |
+| GND | GND | GND |
 
 Both connections use I2C at 400 kHz (fast mode). The MPU6050's default I2C address is 0x68 (AD0 pin tied to GND). Add a 4.7k ohm pull-up resistor on both SDA and SCL if your breakout board does not include them.
 
@@ -149,7 +137,7 @@ Both connections use I2C at 400 kHz (fast mode). The MPU6050's default I2C addre
 <InArticleAd />
 
 
-MicroPython is ideal for data collection because you can iterate quickly, adjust sample rates, and save data to files without recompiling. The following script captures gesture windows and writes them to CSV files on the Pico's filesystem.
+MicroPython suits data collection: you can change the sample rate or the file format and run again without compiling. The driver below reads the sensor, and the script after it records gesture windows to CSV files on the Pico's filesystem.
 
 ### MPU6050 Driver
 
@@ -201,7 +189,7 @@ class MPU6050:
 ```
 
 :::note
-The `read_raw` method unpacks 7 values from the 14-byte burst read (accel_x, accel_y, accel_z, temperature, gyro_x, gyro_y, gyro_z) but returns only the 6 IMU axes, skipping the temperature value at index 3. The `read_scaled` method then divides by the sensitivity factors: 16384 LSB/g for the accelerometer (at +/-2g range) and 131 LSB/(deg/s) for the gyroscope (at +/-250 deg/s range).
+`read_raw` reads 14 bytes (7 values) and drops the temperature at index 3. `read_scaled` then divides by the sensitivity: 16384 counts per g at the +/-2g range, and 131 counts per deg/s at the +/-250 deg/s range.
 :::
 
 ### Data Collection Script
@@ -216,7 +204,7 @@ i2c = I2C(0, sda=Pin(4), scl=Pin(5), freq=400000)
 mpu = MPU6050(i2c)
 
 # LED for status
-led = Pin(25, Pin.OUT)
+led = Pin("LED", Pin.OUT)  # Works on the Pico and on the Pico W
 
 SAMPLE_RATE = 100   # Hz
 WINDOW_SIZE = 100   # 1 second at 100 Hz
@@ -281,11 +269,13 @@ for gesture in GESTURES:
 print("\nData collection complete!")
 ```
 
-Run this script on the Pico via Thonny or mpremote. The script prompts you before each sample, gives a 3-second countdown, records for 1 second, and saves the data. After collection, transfer the `/data` directory to your PC using mpremote or Thonny's file manager.
+Run this script on the Pico with Thonny or mpremote. Before each sample it counts down 3 seconds, then it records for 1 second and saves the file. Afterwards, copy the `/data` directory to your PC.
+
+The model can only be as good as these recordings. Start each gesture at "GO", so that the whole movement is inside the window, and hold the sensor the way it will sit in the finished device. For a device that others will use, record several people.
 
 ### Data Collection on STM32 (C Firmware)
 
-For STM32, we use a simpler approach: the firmware reads the MPU6050 over I2C, buffers one window, and prints it as CSV over UART. A Python script on the PC captures the serial output and saves each window to a file.
+The STM32 has no file system here, so the firmware prints each window as CSV over UART, and a Python script on the PC saves it to a file.
 
 ```c
 #include "stm32f4xx_hal.h"
@@ -471,9 +461,13 @@ while True:
 <InArticleAd />
 
 
-With the CSV files collected, we load them into Python, normalize the data, and train a classifier.
+The training runs in Python on the PC.
 
 ### Loading and Preprocessing
+
+Acceleration is in g, with values near 1. Rotation is in degrees per second, with values up to 250, so it would dominate the result. The script therefore subtracts the mean of each axis and divides by its standard deviation. It saves those six means and six standard deviations, because the firmware must scale its readings in the same way.
+
+The script also holds back 10% of the windows as a test set that training never sees. With 200 windows that is only 20, so one wrong answer moves the accuracy by 5 points.
 
 ```python
 import numpy as np
@@ -550,6 +544,8 @@ print(f"Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
 
 ### Model Architecture and Training
 
+`Dropout(0.3)` switches off 30% of the units at random during training, which stops the network from memorising the 160 training windows. The last layer, softmax, turns the four outputs into scores between 0 and 1 that add up to 1.
+
 ```python
 def build_gesture_model(input_dim, num_classes):
     """Small dense model for gesture classification."""
@@ -595,23 +591,25 @@ print("\nClassification Report:")
 print(classification_report(y_test, y_pred, target_names=GESTURES))
 ```
 
-Expected output:
+Typical output (your accuracy will differ). Here 19 of the 20 test windows are right: one tap was taken for a tilt.
 
 ```
-Total params: 6,276
-Trainable params: 6,276
+Total params: 40,676
+Trainable params: 40,676
 
 Test accuracy: 0.9500
 
 Classification Report:
               precision    recall  f1-score   support
-       shake       0.96      0.96      0.96        25
-        tilt       0.92      0.96      0.94        25
-         tap       0.96      0.92      0.94        25
-      circle       0.96      0.96      0.96        25
+       shake       1.00      1.00      1.00         5
+        tilt       0.83      1.00      0.91         5
+         tap       1.00      0.80      0.89         5
+      circle       1.00      1.00      1.00         5
 ```
 
 ### Quantization and Export
+
+This script converts the 32-bit floats of the model to 8-bit integers, which makes the file about four times smaller, and writes it as a C header.
 
 ```python
 # Post-training int8 quantization
@@ -650,7 +648,7 @@ print("static const float NORM_STDS[] = {",
 <InArticleAd />
 
 
-The Pico deployment uses the C SDK for I2C communication and GPIO, with TFLite Micro for inference.
+The Pico firmware uses the C SDK for I2C and GPIO, and TFLite Micro to run the model. `NORM_MEANS` and `NORM_STDS` in the listing are placeholders: paste the values that your training script printed, or the model receives readings on a scale it never saw.
 
 ### Pico Inference Firmware
 
@@ -838,7 +836,7 @@ int main(void)
         int8_t *input_data = input->data.int8;
 
         for (int i = 0; i < INPUT_SIZE; i++) {
-            int32_t q = (int32_t)(normalized[i] / input_scale) + input_zp;
+            int32_t q = (int32_t)roundf(normalized[i] / input_scale) + input_zp;
             if (q < -128) q = -128;
             if (q > 127) q = 127;
             input_data[i] = (int8_t)q;
@@ -885,12 +883,13 @@ int main(void)
 <InArticleAd />
 
 
-The STM32 deployment follows the same model but uses STM32 HAL for I2C and GPIO. The TFLM inference code is nearly identical because TFLite Micro provides a platform-agnostic API.
+The STM32 firmware runs the same model with the STM32 HAL for I2C and GPIO. The TFLite Micro calls are nearly the same as on the Pico.
 
 ```c
 #include "stm32f4xx_hal.h"
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
@@ -1000,7 +999,7 @@ void gesture_recognition_main(void)
         int8_t *in_data = input->data.int8;
 
         for (int i = 0; i < INPUT_SIZE; i++) {
-            int32_t q = (int32_t)(normalized[i] / in_scale) + in_zp;
+            int32_t q = (int32_t)roundf(normalized[i] / in_scale) + in_zp;
             if (q < -128) q = -128;
             if (q > 127) q = 127;
             in_data[i] = (int8_t)q;
@@ -1049,7 +1048,7 @@ void gesture_recognition_main(void)
 <InArticleAd />
 
 
-Each gesture maps to a distinct LED pattern for immediate visual feedback:
+Each gesture has its own LED pattern, so a person sees at once what the device understood. Keep the action behind a gesture harmless. The model will sometimes be wrong, so a gesture may switch a lamp, but it must never be the only thing that starts or stops a machine.
 
 | Gesture | LED Pattern | Duration |
 |---------|-------------|----------|
@@ -1085,7 +1084,9 @@ static void led_chase_pattern(uint32_t duration_ms)
 <InArticleAd />
 
 
-When using the Pico W or an ESP32 as a Wi-Fi bridge, detected gestures can be published to an MQTT broker for integration with home automation or dashboards.
+With a Pico W, or an ESP32 as a Wi-Fi bridge, the device can publish each detected gesture to an MQTT broker, where other programs can read it.
+
+Two cautions. `broker.hivemq.com` is a public test broker where anyone can read what you publish, so use it for a first test only. And published does not mean received: this `publish` call asks for no confirmation, so a message sent while the Wi-Fi is down is lost.
 
 ```python
 # MicroPython MQTT publish (for Pico W with Wi-Fi)
@@ -1111,12 +1112,14 @@ def publish_gesture(gesture_name, confidence):
     print(f"Published: {payload}")
 ```
 
-For the C firmware (ESP32 or Pico W with lwIP), the MQTT publish follows the same pattern shown in the [IoT Systems course](/education/iot-systems/). The key point is that you only transmit a small JSON payload (the gesture label and confidence) rather than the raw sensor data, which is exactly the bandwidth advantage of edge inference.
+For the C firmware (ESP32 or Pico W with lwIP), the MQTT publish follows the same pattern shown in the [IoT Systems course](/education/iot-systems/). Only a small JSON message leaves the device (the gesture name and its score), not the 600 raw readings of each window.
 
 ## Comparison: Pico vs STM32 Inference Performance
 
 <InArticleAd />
 
+
+The first four rows come from the data sheets. The rows marked "estimate" were not measured on this build, so run both firmwares and read your own numbers from the serial output.
 
 | Metric | RPi Pico (RP2040) | STM32F446RE |
 |--------|-------------------|-------------|
@@ -1124,24 +1127,24 @@ For the C firmware (ESP32 or Pico W with lwIP), the MQTT publish follows the sam
 | SRAM | 264 KB | 128 KB |
 | Flash | 2 MB | 512 KB |
 | FPU | No (software float) | Yes (hardware single-precision) |
-| Model size | ~8 KB (int8) | ~8 KB (int8) |
-| Arena used | ~18 KB | ~18 KB |
-| Inference time | ~3.2 ms | ~0.9 ms |
+| Model size (estimate) | ~43 KB (int8) | ~43 KB (int8) |
+| Arena used (estimate) | ~18 KB | ~18 KB |
+| Inference time (estimate) | ~3.2 ms | ~0.9 ms |
 | Total cycle (capture + infer) | ~1003 ms | ~1001 ms |
-| Power (active inference) | ~25 mA @ 3.3V | ~35 mA @ 3.3V |
+| Current while running (estimate) | ~25 mA @ 3.3V | ~35 mA @ 3.3V |
 
-Key observations:
+What to expect when you measure:
 
-1. **The STM32F4 is roughly 3.5x faster for inference** because of its higher clock speed and hardware FPU. Even with int8 quantization, the TFLM interpreter uses float operations internally for dequantization and softmax. The Cortex-M4F handles these efficiently in hardware.
+1. **The STM32F4 should be about 3.5 times faster for inference.** Its clock is faster, and the Cortex-M4 has multiply-accumulate and DSP instructions (used by CMSIS-NN) that the Cortex-M0+ lacks. The int8 model is integer-only, so the FPU helps only the few float operations in the firmware.
 
-2. **The Pico has more SRAM,** which gives it more headroom for larger models. If you need to deploy a model with a bigger tensor arena, the Pico is more forgiving.
+2. **The Pico has more SRAM,** so a model with a larger tensor arena fits there more easily.
 
-3. **Total cycle time is dominated by data capture** (1 second at 100 Hz), not inference. Both platforms are fast enough for real-time gesture classification at this sample rate.
+3. **Recording the window takes nearly all of the cycle** (1 second at 100 Hz), so on either board the answer is at least 1 second behind the movement.
 
-4. **Power consumption is lower on the Pico** due to its lower clock speed and simpler core architecture. For battery-powered wearables, this matters.
+4. **The Pico should draw less current,** which matters in a battery-powered wearable.
 
 :::tip[Instrument it]
-Gesture and motion models live or die by where the accelerometer sits. Mount it rigidly to the thing that actually moves, aligned so the axis you care about sees the motion cleanly, and keep that orientation identical between training and deployment, since a model trained with the chip one way fails when it is rotated. The same discipline turns this from a gesture demo into machine-motion monitoring: an IMU on a pump or a door learning what normal looks like, and [flagging what is not](https://siliconwit.io).
+Gesture and motion models depend on where the accelerometer sits. Mount it rigidly to the thing that actually moves, aligned so the axis you care about sees the motion cleanly, and keep that orientation identical between training and deployment, since a model trained with the chip one way fails when it is rotated. The same discipline turns this from a gesture demo into machine-motion monitoring: an IMU on a pump or a door learning what normal looks like, and [flagging what is not](https://siliconwit.io).
 :::
 
 ## Exercises
@@ -1149,20 +1152,22 @@ Gesture and motion models live or die by where the accelerometer sits. Mount it 
 <InArticleAd />
 
 
-1. **Add a fifth gesture class.** Define a new gesture (e.g., "figure-eight" or "flick") and collect 50 samples. Retrain the model and measure whether accuracy for existing gestures degrades. Experiment with adding more training epochs or samples to compensate.
+1. **Add a fifth class.** Record 50 windows with no gesture (the device at rest, carried, set down) and train them as a fifth class. Measure whether the accuracy of the four gestures changes.
 
-2. **Implement continuous gesture streaming.** Instead of capturing non-overlapping 1-second windows, use a sliding window that advances by 200 ms. Maintain a ring buffer of 100 samples and classify every 200 ms. Measure the CPU utilization increase and whether the classification results are more responsive.
+2. **Implement continuous gesture streaming.** Use a sliding window that advances by 200 ms: keep a ring buffer of 100 samples and classify every 200 ms. Measure the extra CPU load and whether the answers come sooner.
 
-3. **Deploy on both platforms simultaneously.** Wire both the Pico and STM32 to the same MPU6050 (on the same I2C bus, using different chip select or address configuration). Have both run inference in parallel and compare their results over serial. Log any disagreements between the two classifiers.
+3. **Deploy on both platforms simultaneously.** Fix two MPU6050 boards rigidly together, one wired to the Pico and one to the STM32, so that both see the same movement (two controllers cannot share one sensor on a plain I2C bus). Run both and log every disagreement between them.
 
-4. **Add gesture-controlled LED brightness.** Use the "tilt" gesture to adjust PWM duty cycle on an LED. Tilt forward to increase brightness, tilt backward to decrease. This requires modifying the classifier to output a continuous tilt angle rather than a binary class, or adding a post-classification regression step using the raw accelerometer data from the classified window.
+4. **Add gesture-controlled LED brightness.** Use "tilt" to change the PWM duty cycle of an LED: forward for brighter, backward for dimmer. The classifier gives only a class, so compute the tilt angle from the raw accelerometer data of the classified window.
 
 ## Summary
 
 <InArticleAd />
 
 
-You built a complete gesture recognition pipeline spanning two microcontroller platforms. MicroPython on the RPi Pico handled rapid data collection, producing labeled CSV files for four gesture classes. A small dense neural network trained in TensorFlow achieved over 95% accuracy on the test set. After int8 quantization, the model shrank to approximately 8 KB. Deployment on both the Pico (C SDK) and STM32 (HAL) demonstrated TFLite Micro's cross-platform portability, with the STM32F4 completing inference in under 1 ms thanks to its hardware FPU, while the Pico compensated with more SRAM headroom and lower power draw. LED feedback and MQTT publishing integrated the classifier into a complete interactive system.
+You recorded labelled windows of four gestures with MicroPython on the Pico, trained a small dense network in TensorFlow, and ran the same quantized model on the Pico (C SDK) and the STM32 (HAL). The model has 40,676 parameters at one byte each, so the int8 file should be about 43 KB. The accuracy of about 95% comes from only 20 test windows, so it is a rough figure.
+
+The inference times (about 0.9 ms on the STM32F4, about 3.2 ms on the Pico) are estimates. The difference comes from the clock speed and the multiply-accumulate instructions of the Cortex-M4, not from its FPU, because the int8 model is integer-only. Remember the two limits: the model judges one window at a time, and it always names one of the four gestures unless you teach it a "no gesture" class.
 
 <EdgeAiTinymlComments />
 

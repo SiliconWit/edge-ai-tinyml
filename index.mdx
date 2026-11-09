@@ -60,47 +60,47 @@ Each lesson follows a consistent cycle:
 
 <CardGrid>
   <Card title="Lesson 1: TinyML and Machine Learning on Microcontrollers" icon="star">
-    [TinyML and Machine Learning on Microcontrollers](./tinyml-machine-learning-microcontrollers). Understand the TinyML landscape, toolchains, and hardware constraints. Deploy a pre-trained sine wave model on an ESP32 to see the full workflow from TensorFlow to on-device inference.
+    [TinyML and Machine Learning on Microcontrollers](/education/edge-ai-tinyml/tinyml-machine-learning-microcontrollers/). Understand the TinyML landscape, toolchains, and hardware constraints. Deploy a pre-trained sine wave model on an ESP32 to see the full workflow from TensorFlow to on-device inference.
     **Build:** Sine wave predictor on ESP32. **Parts:** ESP32 (reuse).
   </Card>
 
   <Card title="Lesson 2: Edge Impulse Data Collection and Training" icon="document">
-    [Edge Impulse Data Collection and Training](./edge-impulse-data-collection-training). Collect accelerometer data from an MPU6050, upload it to Edge Impulse, train a motion classifier, and deploy the quantized model back to the ESP32 for real-time inference.
+    [Edge Impulse Data Collection and Training](/education/edge-ai-tinyml/edge-impulse-data-collection-training/). Collect accelerometer data from an MPU6050, upload it to Edge Impulse, train a motion classifier, and deploy the quantized model back to the ESP32 for real-time inference.
     **Build:** Motion classifier via Edge Impulse. **Parts:** ESP32, MPU6050 (reuse or new).
   </Card>
 
   <Card title="Lesson 3: TensorFlow Lite Micro Model Deployment" icon="document">
-    [TensorFlow Lite Micro Model Deployment](./tensorflow-lite-micro-model-deployment). Train a gesture classifier in TensorFlow on your PC, convert it to TFLite Micro, and deploy it on ESP32 and STM32. Compare the TFLM interpreter API across platforms and measure inference time.
+    [TensorFlow Lite Micro Model Deployment](/education/edge-ai-tinyml/tensorflow-lite-micro-model-deployment/). Train a gesture classifier in TensorFlow on your PC, convert it to TFLite Micro, and deploy it on ESP32 and STM32. Compare the TFLM interpreter API across platforms and measure inference time.
     **Build:** Cross-platform gesture classifier. **Parts:** ESP32, STM32 (reuse).
   </Card>
 
   <Card title="Lesson 4: Model Quantization and Optimization for MCUs" icon="document">
-    [Model Quantization and Optimization for MCUs](./model-quantization-optimization-mcu). Take a float32 model and quantize it to int8. Compare accuracy, inference speed, and flash/RAM usage before and after quantization. Learn post-training quantization and quantization-aware training.
+    [Model Quantization and Optimization for MCUs](/education/edge-ai-tinyml/model-quantization-optimization-mcu/). Take a float32 model and quantize it to int8. Compare accuracy, inference speed, and flash/RAM usage before and after quantization. Learn post-training quantization and quantization-aware training.
     **Build:** Quantization comparison bench. **Parts:** ESP32 (reuse).
   </Card>
 
   <Card title="Lesson 5: Keyword Spotting and Voice Wake Word" icon="document">
-    [Keyword Spotting and Voice Wake Word](./keyword-spotting-voice-wake-word). Build a "Hey Device" wake word detector using an I2S MEMS microphone and an ESP32. Train on the Speech Commands dataset, deploy the model, and trigger actions on keyword detection.
+    [Keyword Spotting and Voice Wake Word](/education/edge-ai-tinyml/keyword-spotting-voice-wake-word/). Build a "Hey Device" wake word detector using an I2S MEMS microphone and an ESP32. Train on the Speech Commands dataset, deploy the model, and trigger actions on keyword detection.
     **Build:** Wake word detector with I2S mic. **Parts:** ESP32, INMP441 I2S mic.
   </Card>
 
   <Card title="Lesson 6: Accelerometer Gesture Recognition" icon="document">
-    [Accelerometer Gesture Recognition](./accelerometer-gesture-recognition). Collect labeled gesture data (shake, tilt, tap, circle) from an accelerometer, train a classifier, and deploy it on RPi Pico and STM32. Integrate gesture output with LED feedback and MQTT publishing.
+    [Accelerometer Gesture Recognition](/education/edge-ai-tinyml/accelerometer-gesture-recognition/). Collect labeled gesture data (shake, tilt, tap, circle) from an accelerometer, train a classifier, and deploy it on RPi Pico and STM32. Integrate gesture output with LED feedback and MQTT publishing.
     **Build:** Gesture classifier on Pico/STM32. **Parts:** RPi Pico W, STM32, MPU6050 (reuse).
   </Card>
 
   <Card title="Lesson 7: Anomaly Detection for Predictive Maintenance" icon="document">
-    [Anomaly Detection for Predictive Maintenance](./anomaly-detection-predictive-maintenance). Train an autoencoder on normal vibration data, deploy it on an ESP32, and detect mechanical anomalies in real time. Compare edge-only detection with cloud-based anomaly scoring.
+    [Anomaly Detection for Predictive Maintenance](/education/edge-ai-tinyml/anomaly-detection-predictive-maintenance/). Train an autoencoder on normal vibration data, deploy it on an ESP32, and detect mechanical anomalies in real time. Compare edge-only detection with cloud-based anomaly scoring.
     **Build:** Vibration anomaly detector. **Parts:** ESP32, MPU6050 (reuse).
   </Card>
 
   <Card title="Lesson 8: Camera Image Classification on ESP32" icon="document">
-    [Camera Image Classification on ESP32](./camera-image-classification-esp32). Deploy a MobileNet-based image classifier on an ESP32-CAM. Capture images, run inference, and classify objects or detect people. Optimize the model to fit within ESP32's memory constraints.
+    [Camera Image Classification on ESP32](/education/edge-ai-tinyml/camera-image-classification-esp32/). Deploy a MobileNet-based image classifier on an ESP32-CAM. Capture images, run inference, and classify objects or detect people. Optimize the model to fit within ESP32's memory constraints.
     **Build:** Person/object detector on ESP32-CAM. **Parts:** ESP32-CAM module.
   </Card>
 
   <Card title="Lesson 9: Edge-Cloud Hybrid Architectures" icon="rocket">
-    [Edge-Cloud Hybrid Architectures](./edge-cloud-hybrid-architecture). Combine on-device inference with cloud intelligence. Build a system where the ESP32 handles clear cases locally, escalates uncertain classifications to a cloud server, and receives retrained models via OTA. Covers tiered inference, cloud retraining pipelines, and federated learning concepts.
+    [Edge-Cloud Hybrid Architectures](/education/edge-ai-tinyml/edge-cloud-hybrid-architecture/). Combine on-device inference with cloud intelligence. Build a system where the ESP32 handles clear cases locally, escalates uncertain classifications to a cloud server, and receives retrained models via OTA. Covers tiered inference, cloud retraining pipelines, and federated learning concepts.
     **Build:** Hybrid inference system with OTA model updates. **Parts:** ESP32 (reuse), cloud server.
   </Card>
 </CardGrid>
