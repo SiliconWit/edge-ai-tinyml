@@ -106,9 +106,9 @@ This lesson points a camera at people. Ask before you record or test on anyone, 
 <InArticleAd />
 
 
-On a PC, a framework loads the model into gigabytes of memory and you never count bytes. On a microcontroller you must count them, because three things compete for RAM: the image, the weights of the model, and its intermediate results.
+On a PC, a framework loads the model into gigabytes of memory and you never count bytes. On a microcontroller you must count them: the image and the intermediate results of the model must fit in RAM, and its weights in flash.
 
-A convolutional neural network (CNN) is a model built for images. Each layer slides small filters over the picture and produces a stack of new pictures called feature maps, one for each filter. Those maps are the intermediate results, and they are larger than the image itself.
+A convolutional neural network (CNN) is a model built for images. Each layer slides small filters over the picture and produces a stack of new pictures called feature maps, one for each filter, like a copier that makes several altered copies of one page. Those maps are the intermediate results, and together they are larger than the image itself.
 
 The table shows what each model of this lesson needs. The arena and time figures are estimates.
 
@@ -119,7 +119,7 @@ The table shows what each model of this lesson needs. The arena and time figures
 | Image buffer (in PSRAM) | 4 MB | 9 KB (96x96x1) | 9 KB (96x96x1) |
 | Inference time | N/A | ~200 ms | ~800 ms |
 
-The tensor arena is the block of memory that TFLite Micro uses for the input, the output and the feature maps while the model runs. It must hold the largest maps that exist at the same moment. In the person model the first layer turns the 9,216-byte image into 8 maps of 96 x 96, which is 73,728 bytes, and both are in memory together: about 83 KB. That one layer sets the size of the arena. So the arena, not the size of the weights, limits how large a model you can run.
+The tensor arena is the block of memory that TFLite Micro uses for the input, the output and the feature maps while the model runs. It must hold the largest maps that exist at the same moment. In the person model the first layer turns the 9,216-byte image into 8 maps of 96 x 96, 73,728 bytes, and both are in memory together: about 83 KB. The pooling layer after it needs those maps and its own output of 48 x 48 x 8 = 18,432 bytes at once: about 92 KB. These first maps set the size of the arena. So the arena, not the size of the weights, limits how large a model you can run.
 
 ## ESP32-CAM Hardware Overview
 

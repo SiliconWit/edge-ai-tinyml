@@ -129,7 +129,7 @@ constexpr int kTensorArenaSize = 8 * 1024;
 alignas(16) static uint8_t tensor_arena[kTensorArenaSize];
 ```
 
-The interpreter needs memory for the input, the output and the result of each layer. A PC program would request it with `malloc` when needed. A device that runs for months cannot accept a request that fails after weeks, so TFLM takes all its working memory from one array whose size you fix at build time: the tensor arena. During `AllocateTensors()` the interpreter plans where each tensor goes in it. After that call nothing more is allocated.
+The interpreter needs memory for the input, the output and the result of each layer. A PC program would request it with `malloc`. A device that runs for months cannot accept a request that fails after weeks, so TFLM takes all its working memory from one array of fixed size, set at build time: the tensor arena. Think of a work table of fixed size beside a bookshelf: the model is read where it stands on the shelf (flash), and only the numbers being worked on lie on the table (RAM). During `AllocateTensors()` the interpreter plans where each tensor goes on it. After that call nothing more is allocated.
 
 To size the arena, start large (for example 32 KB) and print `interpreter.arena_used_bytes()`. Then shrink the arena to that number plus a margin of 10% to 20%. An arena that is too small makes `AllocateTensors()` fail. An arena that is too large wastes RAM.
 

@@ -102,7 +102,7 @@ This is predictive maintenance in miniature, and it works only because the senso
 <InArticleAd />
 
 
-The classifiers you trained earlier in this course put an input into one of a few known classes, and they need labelled examples of every class. A motor gives you thousands of healthy hours and almost no failures, so a classifier has nothing to learn the faults from.
+The classifiers earlier in this course put an input into one of a few known classes and need labelled examples of every class. A motor gives you thousands of healthy hours and almost no failures, so a classifier has nothing to learn the faults from.
 
 An anomaly detector needs only the healthy hours. Think of a night guard who knows the usual sounds of a building. The guard cannot name a new sound, but notices at once that it does not belong. The detector does the same, and it has the guard's limits:
 
@@ -487,7 +487,7 @@ A small false alarm rate still gives many false alarms, because the healthy hour
 - The detector catches 95% of the faulty hours: $0.95 \times 20 = 19$ true flags.
 - It flags 1% of the healthy hours: $0.01 \times 8740 \approx 87$ false flags.
 
-Of $19 + 87 = 106$ flags, only 19 are real. That is about 18%, fewer than 1 in 5. The detector is not broken. Faults are rare, so even a small share of the healthy hours outnumbers them. This is why the firmware below smooths the error and waits for several windows in a row, and why a flag means "go and look", not "stop the machine".
+Of $19 + 87 = 106$ flags, only 19 are real. That is about 18%, fewer than 1 in 5. The detector is not broken: faults are rare, so even a small share of the healthy hours outnumbers them. This is why the firmware below smooths the error and waits for several windows in a row, and why a flag means "go and look", not "stop the machine".
 
 ## Deploying on ESP32
 

@@ -400,11 +400,11 @@ In the Edge Impulse Studio, go to **Impulse design**.
 | Window increase | 500 ms |
 | Frequency | 50 Hz |
 
-One acceleration reading looks the same in walking and in running, so a model cannot label a single sample. It needs a stretch of time, called a window. A window of 2 seconds (100 samples at 50 Hz) holds three or more steps of a walk. The window increase of 500 ms is the distance between the starts of two windows, so the windows overlap and one 10-second recording gives 17 training windows.
+One acceleration reading can look the same in walking and in running, so the model needs a stretch of time, a window. A window of 2 seconds (100 samples at 50 Hz) holds three or more steps of a walk. The window increase, 500 ms, is the distance between the starts of two windows. The windows overlap, and one 10-second recording gives (10 - 2) / 0.5 + 1 = 17 training windows.
 
 ### Processing Block: Spectral Analysis
 
-The 300 raw numbers of a window change completely when a step begins a moment later, although the activity is the same. So the model does not see them. Select **Spectral Analysis** as the processing block. It describes each axis by numbers that do not depend on the exact timing:
+The 300 raw numbers of a window change completely when the same walk begins a moment later, so the model does not see them. Select **Spectral Analysis** as the processing block. It describes each axis by numbers that do not depend on the exact timing:
 
 - How strong the movement is: the RMS (root mean square, an average size of the signal).
 - Which rhythms it contains: an FFT (fast Fourier transform) splits the signal into frequencies, and the block reports the power in several bands and the strongest peaks.

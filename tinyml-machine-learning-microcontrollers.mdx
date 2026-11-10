@@ -53,11 +53,11 @@ Train the model on a PC or a cloud service. Shrink it and convert it into a file
            Total: the same, and it works offline
 ```
 
-The time on the MCU depends on the size of the model. The 321-number model of this lesson needs tens of microseconds for one inference. A motion or sound model needs about 1 ms to tens of milliseconds. A whole cycle is longer than one inference: a device that first records one second of sound answers after that second, however fast the model runs.
+The time on the MCU grows with the model: tens of microseconds for one inference of the 321-number model of this lesson, about 1 ms to tens of milliseconds for a motion or sound model. A whole cycle is longer than one inference: a device that first records one second of sound answers after that second, however fast the model runs.
 
 ### Why run the model on the device?
 
-The drawing shows the short delay and the independence from the network. There are three more gains. Raw sensor data stay on the device, and only results are sent. A Cortex-M4 that runs one inference a second draws a few milliamps. And a 2 USD MCU does work that would otherwise need a 50 USD single-board computer or a paid cloud service.
+Beyond the short delay and the independence from the network, there are three more gains. Raw sensor data stay on the device, and only results are sent. A Cortex-M4 that runs one inference a second draws a few milliamps. And a 2 USD MCU does work that would otherwise need a 50 USD single-board computer or a paid cloud service.
 
 The cost is size. A model that fits in kilobytes is less accurate than a large model on a server, and changing it means updating the firmware.
 

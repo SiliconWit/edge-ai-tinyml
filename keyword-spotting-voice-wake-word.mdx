@@ -243,7 +243,7 @@ The microphone does not stop while the processor computes. The I2S driver theref
 <InArticleAd />
 
 
-A small model cannot learn from the raw samples. One second is 16000 numbers, and the same word spoken twice gives different numbers at almost every sample, because the timing never repeats exactly. What does repeat is the pattern of strong and weak frequencies over time. Feature extraction computes that pattern. It cuts the second into 61 overlapping frames and describes each by 13 numbers called MFCCs (mel-frequency cepstral coefficients). The model receives 793 numbers in place of 16000, and they change little when the word comes a little earlier or louder.
+A small model cannot learn from the raw samples. One second is 16000 numbers, and the same word spoken twice differs at almost every sample, because the timing never repeats exactly. What repeats is the pattern of strong and weak frequencies over time, as sheet music records which notes are played when, not the air pressure. Feature extraction computes that pattern: it cuts the second into 61 overlapping frames and describes each by 13 numbers called MFCCs (mel-frequency cepstral coefficients). The model receives 793 numbers in place of 16000, and they change little when the word comes a little earlier or louder.
 
 ### MFCC Pipeline
 

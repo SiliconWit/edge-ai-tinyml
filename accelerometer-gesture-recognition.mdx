@@ -111,7 +111,7 @@ You cannot tell a program what a shake looks like, so you show it examples. The 
 4. **Deploy.** The trained model is quantized to int8 (each of its numbers is stored in one byte), converted to a C array, and built into firmware for the Pico and the STM32. Both run the same model. Only the I2C and GPIO code differs.
 </Steps>
 
-Two limits follow from this design, and both surprise people:
+Two limits follow, and both surprise people:
 
 - **The model sees one window and nothing else.** A gesture that starts late is cut in two by the edge of the window, and neither half looks like the training examples.
 - **The model always answers.** Its four scores add up to 1, so it names a gesture even when the device lies still. The firmware acts only when the best score is above 0.6, which hides most of these wrong answers, not all. The cure is a fifth class of recorded "no gesture" windows.
@@ -465,7 +465,7 @@ The training runs in Python on the PC.
 
 ### Loading and Preprocessing
 
-Acceleration is in g, with values near 1. Rotation is in degrees per second, with values up to 250, so it would dominate the result. The script therefore subtracts the mean of each axis and divides by its standard deviation. It saves those six means and six standard deviations, because the firmware must scale its readings in the same way.
+Acceleration (in g) is near 1 and rotation (in degrees per second) reaches 250, so rotation would dominate. The script therefore subtracts the mean of each axis and divides by its standard deviation, and it saves those six means and six standard deviations: the firmware must scale its readings in the same way.
 
 The script also holds back 10% of the windows as a test set that training never sees. With 200 windows that is only 20, so one wrong answer moves the accuracy by 5 points.
 

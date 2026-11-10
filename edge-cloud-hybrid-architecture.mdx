@@ -130,7 +130,7 @@ You derive `low_threshold` and `high_threshold` from the training data distribut
 - `low_threshold = mu + 2.0 * sigma`
 - `high_threshold = mu + 4.0 * sigma`
 
-A window below mean + 2 sigma is treated as normal, a window above mean + 4 sigma as an anomaly, and the zone between them is escalated. Widen the zone and more windows go to the server. Narrow it and the device decides more by itself, with more mistakes near the line.
+Widen the zone and more windows go to the server. Narrow it and the device decides more by itself, with more mistakes near the line.
 
 How many windows land in the zone? If the errors of healthy windows followed a normal distribution, about 2.3% of them would fall between 2 and 4 sigma. Real errors have a longer tail, which is why this lesson assumes about 5%.
 
