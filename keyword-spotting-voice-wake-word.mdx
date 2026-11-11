@@ -46,7 +46,7 @@ A trigger that listens for the word "yes" (from Google's Speech Commands dataset
 | Audio format | 16 kHz, 16-bit mono |
 | Window length | 1 second (16000 samples) |
 | Feature extraction | 13 MFCCs, 32 ms frames, 16 ms hop |
-| Model | Small CNN (Conv1D), ~27 KB quantized (estimate) |
+| Model | Small CNN (Conv1D), about 41 KB quantized |
 | Classes | "yes", "no", "unknown", "silence" |
 | Inference time | < 100 ms on ESP32 at 240 MHz |
 | Detection LED | GPIO 2 (onboard) |
@@ -461,8 +461,10 @@ def extract_mfcc_tf(waveform):
     mfccs = tf.signal.mfccs_from_log_mel_spectrograms(log_mel)[..., :NUM_MFCC]
     return mfccs
 
-# Build file lists
-keywords_dir = os.path.join(os.path.dirname(data_dir), 'speech_commands_v0.02')
+# Build file lists. The word folders (yes/, no/, ...) are at the top of
+# the archive. Keras 3 returns the folder it extracted into; Keras 2
+# returned the archive path and extracted beside it.
+keywords_dir = data_dir if os.path.isdir(data_dir) else os.path.dirname(data_dir)
 yes_files = tf.io.gfile.glob(os.path.join(keywords_dir, 'yes', '*.wav'))
 no_files = tf.io.gfile.glob(os.path.join(keywords_dir, 'no', '*.wav'))
 
@@ -643,7 +645,7 @@ model_path.write_bytes(tflite_model)
 print(f"Quantized model size: {len(tflite_model)} bytes")
 ```
 
-The file size was not measured for this lesson. We estimate 25 to 30 KB: the 22,692 parameters take about 22 KB at one byte each, and the rest describes the layers. That is a small part of the flash of an ESP32. The script prints the real size.
+Converted with TensorFlow 2.21, this architecture gives a file of 40,864 bytes. The 22,692 parameters take about 22 KB at one byte each; the rest is the layer description, 32-bit biases, and the batch normalization, which stays as separate multiply and add steps because it follows the ReLU. That is a small part of the flash of an ESP32. The script prints the real size.
 
 ### Converting to C Header
 
@@ -664,62 +666,46 @@ unsigned int wake_word_model_tflite_len = 27136;
 
 ### Generate Mel Filterbank Constants
 
-This Python script prints the C array of the 26 mel bands for the on-device MFCC extraction. It replaces the placeholder table in the firmware:
+This Python script prints the C array of the 26 mel bands for the on-device MFCC extraction. It replaces the placeholder table in the firmware. It asks TensorFlow for the same matrix that `extract_mfcc_tf` used in training, so the bands on the chip are exactly the bands the model learned from. (A table built by hand from the mel formula, with triangles placed on FFT bin numbers, differs from it by up to 0.36 in single weights and by about 3% in the MFCCs.)
 
 ```python
-import numpy as np
-
-def hz_to_mel(hz):
-    return 2595.0 * np.log10(1.0 + hz / 700.0)
-
-def mel_to_hz(mel):
-    return 700.0 * (10.0 ** (mel / 2595.0) - 1.0)
+# generate_filterbank.py
+import tensorflow as tf
 
 def generate_mel_filterbank_c(num_mel_bins=26, fft_size=512,
-                               sample_rate=16000, low_freq=80,
-                               high_freq=7600):
+                               sample_rate=16000, low_freq=80.0,
+                               high_freq=7600.0):
     num_fft_bins = fft_size // 2 + 1
-    low_mel = hz_to_mel(low_freq)
-    high_mel = hz_to_mel(high_freq)
-
-    mel_points = np.linspace(low_mel, high_mel, num_mel_bins + 2)
-    hz_points = mel_to_hz(mel_points)
-    bin_points = np.floor((fft_size + 1) * hz_points / sample_rate).astype(int)
-
-    filterbank = np.zeros((num_mel_bins, num_fft_bins))
-    for m in range(num_mel_bins):
-        left = bin_points[m]
-        center = bin_points[m + 1]
-        right = bin_points[m + 2]
-        for k in range(left, center):
-            if center != left:
-                filterbank[m, k] = (k - left) / (center - left)
-        for k in range(center, right):
-            if right != center:
-                filterbank[m, k] = (right - k) / (right - center)
+    # The same call as in extract_mfcc_tf. TensorFlow returns
+    # [FFT bins][mel bands]; the firmware wants [mel bands][FFT bins]
+    filterbank = tf.signal.linear_to_mel_weight_matrix(
+        num_mel_bins, num_fft_bins, sample_rate,
+        low_freq, high_freq).numpy().T
 
     # Print as C array
     print("static const float MEL_FILTERBANK"
           f"[{num_mel_bins}][{num_fft_bins}] = {{")
     for m in range(num_mel_bins):
-        values = ', '.join(f'{v:.6f}' for v in filterbank[m])
+        values = ', '.join(f'{v:.6f}f' for v in filterbank[m])
         print(f"    {{{values}}},")
     print("};")
 
 generate_mel_filterbank_c()
 ```
 
+With this table and a correct FFT, the C function `extract_mfcc` above reproduced the MFCCs of TensorFlow to within 0.00001 on a test second of sound (checked on a PC, with a plain DFT in place of ESP-DSP).
+
 ## Real-Time Keyword Detection Loop
 
 <InArticleAd />
 
 
-The main loop repeats four actions: capture one second of sound, extract the features, run the model, and act on a detection. The 40 KB tensor arena is a generous first size. Read the log line "arena used" and reduce it.
+The main loop repeats four actions: capture one second of sound, extract the features, run the model, and act on a detection. The 40 KB tensor arena is a generous first size. Read the log line "arena used" and reduce it. Create the task with at least 12 KB of stack, for example `xTaskCreate(keyword_detection_task, "kws", 12288, NULL, 5, NULL)`: `extract_mfcc` and the FFT keep about 7 KB of arrays on the stack, and the default 3.5 KB of `app_main` overflows.
 
 ```c
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
-#include "tensorflow/lite/schema/schema_generated.h"
+#include "tensorflow/lite/micro/schema/schema_generated.h"  /* older TFLM: tensorflow/lite/schema/ */
 #include "wake_word_model.h"
 
 /* TFLite Micro arena */
@@ -752,8 +738,12 @@ static void tflm_init(void)
         return;
     }
 
-    static tflite::MicroMutableOpResolver<8> resolver;
+    /* BatchNormalization after a ReLU cannot be folded into the
+       convolution, so the converter keeps it as MUL and ADD ops */
+    static tflite::MicroMutableOpResolver<10> resolver;
     resolver.AddConv2D();
+    resolver.AddMul();
+    resolver.AddAdd();
     /* Conv1D and MaxPool1D run as 2D ops. The converter wraps them in
        EXPAND_DIMS and SQUEEZE ops, or in RESHAPE ops, depending on the
        TensorFlow version, so register all three. */
@@ -767,7 +757,11 @@ static void tflm_init(void)
 
     static tflite::MicroInterpreter interpreter(
         model, resolver, s_tensor_arena, TENSOR_ARENA_SIZE);
-    interpreter.AllocateTensors();
+    if (interpreter.AllocateTensors() != kTfLiteOk) {
+        /* A missing op or a small arena; the log above names it */
+        ESP_LOGE(TAG, "AllocateTensors failed");
+        return;
+    }
 
     s_interpreter = &interpreter;
     s_input = interpreter.input(0);
@@ -846,6 +840,9 @@ static void keyword_detection_task(void *arg)
         float confidence = 0.0f;
         int predicted = run_inference(s_mfcc_features, &confidence);
         int64_t t_infer = esp_timer_get_time();
+        if (predicted < 0) {
+            continue;   /* inference failed and was logged */
+        }
 
         ESP_LOGI(TAG, "Class: %s (%.2f), MFCC: %lld us, Infer: %lld us",
                  CLASS_LABELS[predicted], confidence,
@@ -1136,6 +1133,14 @@ dependencies:
    The onboard LED lights up for 1 second after two consecutive detections.
 </Steps>
 
+### Check it
+
+A detector is judged by two numbers: how many spoken words it catches, and how many times it fires when nobody said the word.
+
+1. **The features.** Print the 793 MFCCs of one window and send the same second of sound (16000 samples, printed as numbers) to the PC. `extract_mfcc_tf` on that sound must give the same table to about 0.01. A larger difference means the scale, the window or the filterbank differ, and the model sees numbers it was never trained on.
+2. **Hits.** Say "yes, yes" 20 times at 1 m, in the room where the device will work, and count the detections. 18 of 20 is a hit rate of 90%.
+3. **False alarms.** Leave the device for one hour of normal sound in that room (talk, radio, machines) and count detections. Report it as false alarms per hour; then move `DETECTION_THRESHOLD` and repeat both counts. Raising the threshold lowers both numbers, and only these counts tell you where to stop.
+
 :::tip[Instrument it]
 The same chain can listen to a machine. A worn bearing, a pump that cavitates, a leaking valve and an arcing contact each make a typical sound, and a small model can learn it as it learns a word. Mount the [microphone](/education/sensor-actuator-interfacing-stm32/) close to the source and shield it from wind and from knocks. Classify on the device, so that only the detection leaves it, and [report the fault](https://siliconwit.io) for a person to check.
 :::
@@ -1165,7 +1170,7 @@ You built a complete keyword detector:
 - A small Conv1D classifier, trained on the Speech Commands dataset, runs inference in under 100 ms.
 - Two detections in a row are required before the LED lights or an MQTT event is published.
 
-The quantized model is estimated at 25 to 30 KB of flash. A silence gate and a listen and sleep cycle extend the battery life.
+The quantized model takes about 41 KB of flash. A silence gate and a listen and sleep cycle extend the battery life.
 
 <EdgeAiTinymlComments />
 

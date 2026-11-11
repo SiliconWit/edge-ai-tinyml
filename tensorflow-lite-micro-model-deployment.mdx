@@ -60,7 +60,7 @@ The runtime has four parts. Three stay in flash: the model, the interpreter code
   ┌──────────────────┐     ┌────────────────┐
   │ Model FlatBuffer │     │ Input tensor   │
   │ (weights + graph)│     │ [150 x int8]   │
-  │ ~14 KB           │     ├────────────────┤
+  │ ~17 KB           │     ├────────────────┤
   └──────────────────┘     │ Layer 1 output │
   ┌──────────────────┐     │ [64 x int8]    │
   │ TFLM interpreter │     ├────────────────┤
@@ -81,10 +81,10 @@ The `.tflite` file is a FlatBuffer, a binary format that a program reads in plac
 
 ```text
   TensorFlow (Python, PC)
-  model.h5 (float32, ~48 KB)
+  Keras model (float32, ~48 KB)
        │
        ▼ TFLiteConverter
-  model.tflite (int8, ~14 KB)
+  model.tflite (int8, ~17 KB)
        │
        ▼ xxd -i model.tflite > model_data.h
   const unsigned char model_data[] = {
@@ -96,21 +96,18 @@ The `.tflite` file is a FlatBuffer, a binary format that a program reads in plac
   (model stays in flash, read in place)
 ```
 
-Both sizes are estimates, not measurements. The model has 11,843 parameters: 4 bytes each as float32, 1 byte each as int8, plus about 2 KB that describes the layers.
+The model has 11,843 parameters: 4 bytes each as float32, 1 byte each as int8 (the 99 biases stay 32-bit), plus the layer description and a scale and zero point per tensor. With TensorFlow 2.21 the files were 48,748 bytes (float32) and 17,032 bytes (int8).
 
 ### 2. The Op Resolver
 
 ```cpp
 // Register only the operators your model uses
-static tflite::MicroMutableOpResolver<5> resolver;
-resolver.AddFullyConnected();
-resolver.AddRelu();
+static tflite::MicroMutableOpResolver<2> resolver;
+resolver.AddFullyConnected();  // ReLU is fused into it
 resolver.AddSoftmax();
-resolver.AddQuantize();
-resolver.AddDequantize();
 ```
 
-An op (operation) is one kind of calculation, and each layer of the network uses one or more. The model file only names its ops. The code that performs them is in your firmware, and the op resolver is the table that connects the two. `MicroMutableOpResolver<N>` links only the ops you add. `AllOpsResolver` links every op, and each unused one costs 1 KB to 10 KB of flash.
+An op (operation) is one kind of calculation, and each layer of the network uses one or more. The model file only names its ops. The code that performs them is in your firmware, and the op resolver is the table that connects the two. `MicroMutableOpResolver<N>` links only the ops you add; each unused op would cost 1 KB to 10 KB of flash (the old `AllOpsResolver`, which linked all of them, has been removed from TFLM). This model has only two: the Analyzer below lists three FULLY_CONNECTED ops and one SOFTMAX, because the converter folds each ReLU into its layer and int8 input and output need no QUANTIZE or DEQUANTIZE.
 
 If inference fails with "Didn't find op for builtin opcode", you forgot to register an op that the model needs. Check the model ops with:
 
@@ -129,7 +126,7 @@ constexpr int kTensorArenaSize = 8 * 1024;
 alignas(16) static uint8_t tensor_arena[kTensorArenaSize];
 ```
 
-The interpreter needs memory for the input, the output and the result of each layer. A PC program would request it with `malloc`. A device that runs for months cannot accept a request that fails after weeks, so TFLM takes all its working memory from one array of fixed size, set at build time: the tensor arena. Think of a work table of fixed size beside a bookshelf: the model is read where it stands on the shelf (flash), and only the numbers being worked on lie on the table (RAM). During `AllocateTensors()` the interpreter plans where each tensor goes on it. After that call nothing more is allocated.
+A PC program would get working memory with `malloc`; a device that runs for months cannot accept a request that fails after weeks. So TFLM takes the input, the output and every layer result from one fixed array set at build time, the tensor arena. Think of a fixed work table beside a bookshelf: the model is read where it stands on the shelf (flash), and only the numbers being worked on lie on the table (RAM). `AllocateTensors()` plans where each tensor goes; after that nothing more is allocated.
 
 To size the arena, start large (for example 32 KB) and print `interpreter.arena_used_bytes()`. Then shrink the arena to that number plus a margin of 10% to 20%. An arena that is too small makes `AllocateTensors()` fail. An arena that is too large wastes RAM.
 
@@ -350,7 +347,8 @@ correct = 0
 for i in range(len(X_test)):
     input_scale = input_details[0]['quantization'][0]
     input_zp = input_details[0]['quantization'][1]
-    x_q = np.round(X_test[i] / input_scale + input_zp).astype(np.int8)
+    # clip: a value above the range the converter saw would wrap around
+    x_q = np.clip(np.round(X_test[i] / input_scale + input_zp), -128, 127).astype(np.int8)
     interpreter.set_tensor(input_details[0]['index'], x_q.reshape(1, 150))
     interpreter.invoke()
     output = interpreter.get_tensor(output_details[0]['index'])[0]
@@ -411,7 +409,7 @@ The firmware records 1 second of readings, scales and quantizes them exactly as 
 
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
 #include "tensorflow/lite/micro/micro_interpreter.h"
-#include "tensorflow/lite/schema/schema_generated.h"
+#include "tensorflow/lite/micro/schema/schema_generated.h"  // older TFLM: tensorflow/lite/schema/
 
 #include "gesture_model_data.h"
 
@@ -475,13 +473,10 @@ extern "C" void app_main(void) {
         return;
     }
 
-    // Register ops
-    static tflite::MicroMutableOpResolver<5> resolver;
+    // Register ops (the model holds only these two)
+    static tflite::MicroMutableOpResolver<2> resolver;
     resolver.AddFullyConnected();
-    resolver.AddRelu();
     resolver.AddSoftmax();
-    resolver.AddQuantize();
-    resolver.AddDequantize();
 
     // Create interpreter
     static tflite::MicroInterpreter interpreter(model, resolver,
@@ -509,14 +504,16 @@ extern "C" void app_main(void) {
     ESP_LOGI(TAG, "Ready. Perform gestures...");
 
     while (1) {
-        // Collect 1 second of accelerometer data
+        // Collect 1 second of accelerometer data at a fixed 20 ms period
+        // (set CONFIG_FREERTOS_HZ=1000; at 100 Hz vTaskDelay(2) waits 10 to 20 ms)
+        TickType_t last_wake = xTaskGetTickCount();
         for (int i = 0; i < WINDOW_SAMPLES; i++) {
             float ax, ay, az;
             read_accel(&ax, &ay, &az);
             raw_buffer[i * 3 + 0] = ax;
             raw_buffer[i * 3 + 1] = ay;
             raw_buffer[i * 3 + 2] = az;
-            vTaskDelay(pdMS_TO_TICKS(interval_ms));
+            vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(interval_ms));
         }
 
         // Normalize and quantize
@@ -526,7 +523,8 @@ extern "C" void app_main(void) {
             // Clamp to [0, 1]
             if (normalized < 0.0f) normalized = 0.0f;
             if (normalized > 1.0f) normalized = 1.0f;
-            input->data.int8[i] = (int8_t)roundf(normalized / input_scale + input_zp);
+            int32_t q = (int32_t)roundf(normalized / input_scale) + input_zp;
+            input->data.int8[i] = (int8_t)(q < -128 ? -128 : (q > 127 ? 127 : q));
         }
 
         // Run inference
@@ -587,6 +585,16 @@ The same TFLite model runs on the STM32. The inference code is identical. Only t
     - STM32F411RETx_FLASH.ld
 </FileTree>
 
+The `lib/tflite-micro` folder is not a download. Generate it from a clone of the `tflite-micro` repository; this copies the sources TFLM needs, with the CMSIS-NN kernels, into a plain folder that any Makefile can compile:
+
+```bash
+python3 tensorflow/lite/micro/tools/project_generation/create_tflm_tree.py \
+  --makefile_options="TARGET=cortex_m_generic OPTIMIZED_KERNEL_DIR=cmsis_nn TARGET_ARCH=project_generation" \
+  gesture_stm32/lib/tflite-micro
+```
+
+Compile the C++ files with `-std=c++17 -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -fno-rtti -fno-exceptions`. The newlib-nano C library of most STM32 projects prints nothing for `%f` unless you link with `-u _printf_float`.
+
 ### STM32 Inference Code
 
 ```cpp
@@ -600,7 +608,7 @@ The same TFLite model runs on the STM32. The inference code is identical. Only t
 
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
 #include "tensorflow/lite/micro/micro_interpreter.h"
-#include "tensorflow/lite/schema/schema_generated.h"
+#include "tensorflow/lite/micro/schema/schema_generated.h"  // older TFLM: tensorflow/lite/schema/
 
 #include "gesture_model_data.h"
 #include "mpu6050.h"
@@ -640,12 +648,9 @@ int main(void) {
         while (1);
     }
 
-    static tflite::MicroMutableOpResolver<5> resolver;
+    static tflite::MicroMutableOpResolver<2> resolver;
     resolver.AddFullyConnected();
-    resolver.AddRelu();
     resolver.AddSoftmax();
-    resolver.AddQuantize();
-    resolver.AddDequantize();
 
     static tflite::MicroInterpreter interpreter(model, resolver,
                                                  tensor_arena, kArenaSize);
@@ -667,14 +672,17 @@ int main(void) {
     float raw_buffer[NUM_FEATURES];
 
     while (1) {
-        // Collect accelerometer window
+        // Collect accelerometer window at a fixed 20 ms period
+        // (HAL_Delay(20) after each read would give about 21 ms)
+        uint32_t next = HAL_GetTick();
         for (int i = 0; i < WINDOW_SAMPLES; i++) {
             float ax, ay, az;
             MPU6050_ReadAccel(&ax, &ay, &az);
             raw_buffer[i * 3 + 0] = ax;
             raw_buffer[i * 3 + 1] = ay;
             raw_buffer[i * 3 + 2] = az;
-            HAL_Delay(1000 / SAMPLE_RATE_HZ);
+            next += 1000 / SAMPLE_RATE_HZ;
+            while ((int32_t)(HAL_GetTick() - next) < 0) { }
         }
 
         // Normalize and quantize input
@@ -683,7 +691,8 @@ int main(void) {
                          (GESTURE_INPUT_MAX - GESTURE_INPUT_MIN);
             if (norm < 0.0f) norm = 0.0f;
             if (norm > 1.0f) norm = 1.0f;
-            input->data.int8[i] = (int8_t)roundf(norm / input_scale + input_zp);
+            int32_t q = (int32_t)roundf(norm / input_scale) + input_zp;
+            input->data.int8[i] = (int8_t)(q < -128 ? -128 : (q > 127 ? 127 : q));
         }
 
         // Time the inference
@@ -719,13 +728,13 @@ int main(void) {
 <InArticleAd />
 
 
-Run the same int8 model on both boards and compare what they print. The sizes below are estimates from the parameter count, and the times are typical ranges.
+Run the same int8 model on both boards and compare what they print. The model size was measured (TensorFlow 2.21); the arena, the times and the firmware sizes are estimates.
 
 ### Inference Time Comparison
 
 | Metric | ESP32 (240 MHz Xtensa) | STM32F411 (100 MHz Cortex-M4F) |
 |--------|------------------------|---------------------------------|
-| Model size in flash | ~14 KB (estimate) | ~14 KB (identical) |
+| Model size in flash | ~17 KB (17,032 bytes) | ~17 KB (identical) |
 | Tensor arena used | ~6 KB (estimate) | ~6 KB (identical) |
 | Inference time | 0.5 to 2 ms | 2 to 8 ms |
 | Total firmware size | ~400 KB (with ESP-IDF) | ~120 KB (bare metal) |
@@ -750,9 +759,15 @@ The model and the runtime are identical. The difference has three causes:
 | TFLM arena | 6 KB | 6 KB |
 | Stack (main task) | 8 KB | 4 KB |
 | FreeRTOS overhead | ~15 KB | 0 (bare metal) |
-| Available for application | ~490 KB | ~118 KB |
+| Available for application | ~300 KB of heap | ~118 KB |
 
-Both chips have plenty of RAM for this model. A small chip such as an STM32L0 with 20 KB of RAM needs a carefully sized arena.
+On the ESP32, not all 520 KB is free: part of it holds code and caches, and Wi-Fi takes more. A plain ESP-IDF program starts with about 300 KB of heap; print `esp_get_free_heap_size()` to see yours. Both chips have plenty of RAM for this model. A small chip such as an STM32L0 with 20 KB of RAM needs a carefully sized arena.
+
+### Check it
+
+1. **Same window, same scores.** Print the 150 int8 inputs of one window, use them as `x_q` in the PC script, and compare the three int8 outputs: equal, or 1 apart where an optimized kernel rounds differently. More means the firmware scales its input differently from training.
+2. **Same sample rate.** 50 readings must take 1,000 ms; a 1.07 s window holds a different gesture than the model learned.
+3. **Ten of each.** Do each gesture ten times; far fewer right answers than the test accuracy predicts means the live data differ from the recordings.
 
 ## Debugging Common Issues
 
@@ -777,7 +792,7 @@ Both chips have plenty of RAM for this model. A small chip such as an STM32L0 wi
   </Card>
 
   <Card title="Model too large for flash" icon="warning">
-  The int8 model should be 3x to 4x smaller than float32. If it is still too large, reduce the number of neurons or layers in the training script. A model with 32 and 16 hidden neurons instead of 64 and 32 cuts the size roughly in half.
+  The int8 model is about 3 times smaller than float32 here (17,032 against 48,748 bytes). If it is still too large, reduce the number of neurons or layers in the training script. A model with 32 and 16 hidden neurons instead of 64 and 32 cuts the size roughly in half.
   </Card>
 
   <Card title="Hard fault on STM32" icon="warning">
@@ -823,8 +838,8 @@ After deployment the model runs on the [MCU wired to the sensor](/education/sens
   Open your `.tflite` file in [netron.app](https://netron.app). Identify each operator, check the tensor shapes, and verify quantization parameters match what the firmware prints.
   </Card>
 
-  <Card title="Exercise 3: AllOpsResolver Comparison" icon="pencil">
-  Replace `MicroMutableOpResolver<5>` with `AllOpsResolver`. Rebuild and compare the firmware binary size. This shows the cost of unused kernel code.
+  <Card title="Exercise 3: The Cost of Unused Ops" icon="pencil">
+  Register ten ops the model does not use (for example `AddConv2D()`, `AddDepthwiseConv2D()`, `AddAveragePool2D()`), with the template number raised to match. Rebuild and compare the firmware binary size. This shows the cost of unused kernel code, which the old `AllOpsResolver` paid for every op.
   </Card>
 
   <Card title="Exercise 4: Continuous Inference" icon="pencil">

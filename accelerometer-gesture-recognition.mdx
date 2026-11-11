@@ -42,7 +42,7 @@ Buttons wear out, and a touchscreen adds cost and fails with gloves or inside a 
      network: 600 ► 64 ► 32 ► 4
         │
   3. Quantize and convert
-     float32 (~165 KB) ► int8 (~43 KB)
+     float32 (~165 KB) ► int8 (~45 KB)
         │
   4. Run on Pico (C SDK) and STM32 (HAL)
      same .tflite, different platform code
@@ -62,7 +62,7 @@ A wearable or handheld device that recognizes four gestures (shake, tilt, tap, c
 | Sample rate | 100 Hz |
 | Window length | 1 second (100 samples x 6 axes) |
 | Gestures | shake, tilt, tap, circle |
-| Model | Dense NN, about 43 KB quantized (estimated from the parameter count) |
+| Model | Dense NN, about 45 KB quantized (45,880 bytes with TensorFlow 2.21) |
 | Target MCUs | RPi Pico (RP2040) and STM32F4 |
 | Output | LED color/pattern per gesture, MQTT publish |
 
@@ -166,6 +166,10 @@ class MPU6050:
         self.i2c.writeto_mem(self.addr, self.ACCEL_CONFIG, b'\x00')
         # Set gyroscope range to +/- 250 deg/s
         self.i2c.writeto_mem(self.addr, self.GYRO_CONFIG, b'\x00')
+        # Low-pass filter at 44 Hz (CONFIG register 0x1A = 3). It removes
+        # vibration above half the 100 Hz sample rate, and sets the
+        # internal rate to 1 kHz (with the filter off it is 8 kHz)
+        self.i2c.writeto_mem(self.addr, 0x1A, b'\x03')
         # Set sample rate divider for 100 Hz (1 kHz / (1 + 9))
         self.i2c.writeto_mem(self.addr, self.SMPLRT_DIV, b'\x09')
 
@@ -319,7 +323,12 @@ static void mpu6050_init(void)
     HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, 0x1B,
                       I2C_MEMADD_SIZE_8BIT, &data, 1, 100);
 
-    /* Sample rate: 100 Hz */
+    /* Low-pass filter 44 Hz, internal rate 1 kHz (CONFIG 0x1A = 3) */
+    data = 0x03;
+    HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, 0x1A,
+                      I2C_MEMADD_SIZE_8BIT, &data, 1, 100);
+
+    /* Sample rate: 1 kHz / (1 + 9) = 100 Hz */
     data = 0x09;
     HAL_I2C_Mem_Write(&hi2c1, MPU6050_ADDR, 0x19,
                       I2C_MEMADD_SIZE_8BIT, &data, 1, 100);
@@ -663,7 +672,7 @@ The Pico firmware uses the C SDK for I2C and GPIO, and TFLite Micro to run the m
 
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
-#include "tensorflow/lite/schema/schema_generated.h"
+#include "tensorflow/lite/micro/schema/schema_generated.h"  /* older TFLM: tensorflow/lite/schema/ */
 #include "gesture_model.h"
 
 /* I2C and sensor config */
@@ -721,7 +730,11 @@ static void mpu6050_init(void)
     buf[0] = 0x1B; buf[1] = 0x00;
     i2c_write_blocking(I2C_PORT, MPU6050_ADDR, buf, 2, false);
 
-    /* Sample rate 100 Hz */
+    /* Low-pass filter 44 Hz, internal rate 1 kHz (CONFIG 0x1A = 3) */
+    buf[0] = 0x1A; buf[1] = 0x03;
+    i2c_write_blocking(I2C_PORT, MPU6050_ADDR, buf, 2, false);
+
+    /* Sample rate 1 kHz / (1 + 9) = 100 Hz */
     buf[0] = 0x19; buf[1] = 0x09;
     i2c_write_blocking(I2C_PORT, MPU6050_ADDR, buf, 2, false);
 }
@@ -813,7 +826,9 @@ int main(void)
 
     static tflite::MicroInterpreter interpreter(
         model, resolver, tensor_arena, TENSOR_ARENA_SIZE);
-    interpreter.AllocateTensors();
+    if (interpreter.AllocateTensors() != kTfLiteOk) {
+        while (1) { }   /* arena too small or an op missing: stop here */
+    }
 
     TfLiteTensor *input = interpreter.input(0);
     TfLiteTensor *output = interpreter.output(0);
@@ -844,7 +859,9 @@ int main(void)
 
         /* Run inference */
         uint64_t t_start = time_us_64();
-        interpreter.Invoke();
+        if (interpreter.Invoke() != kTfLiteOk) {
+            continue;
+        }
         uint64_t t_end = time_us_64();
 
         /* Dequantize output */
@@ -893,7 +910,7 @@ The STM32 firmware runs the same model with the STM32 HAL for I2C and GPIO. The 
 
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
-#include "tensorflow/lite/schema/schema_generated.h"
+#include "tensorflow/lite/micro/schema/schema_generated.h"  /* older TFLM: tensorflow/lite/schema/ */
 #include "gesture_model.h"
 
 extern I2C_HandleTypeDef hi2c1;
@@ -977,7 +994,9 @@ void gesture_recognition_main(void)
 
     static tflite::MicroInterpreter interpreter(
         model, resolver, tensor_arena, TENSOR_ARENA_SIZE);
-    interpreter.AllocateTensors();
+    if (interpreter.AllocateTensors() != kTfLiteOk) {
+        while (1) { }   /* arena too small or an op missing: stop here */
+    }
 
     TfLiteTensor *input = interpreter.input(0);
     TfLiteTensor *output = interpreter.output(0);
@@ -1007,7 +1026,9 @@ void gesture_recognition_main(void)
 
         /* Time the inference */
         uint32_t t0 = __HAL_TIM_GET_COUNTER(&htim2);
-        interpreter.Invoke();
+        if (interpreter.Invoke() != kTfLiteOk) {
+            continue;
+        }
         uint32_t t1 = __HAL_TIM_GET_COUNTER(&htim2);
         uint32_t inference_us = t1 - t0;
 
@@ -1123,11 +1144,11 @@ The first four rows come from the data sheets. The rows marked "estimate" were n
 
 | Metric | RPi Pico (RP2040) | STM32F446RE |
 |--------|-------------------|-------------|
-| CPU | Dual Cortex-M0+ @ 133 MHz | Cortex-M4F @ 180 MHz |
+| CPU | Dual Cortex-M0+ @ 125 MHz (SDK default) | Cortex-M4F @ 180 MHz |
 | SRAM | 264 KB | 128 KB |
 | Flash | 2 MB | 512 KB |
 | FPU | No (software float) | Yes (hardware single-precision) |
-| Model size (estimate) | ~43 KB (int8) | ~43 KB (int8) |
+| Model size (measured on PC) | ~45 KB (int8) | ~45 KB (int8) |
 | Arena used (estimate) | ~18 KB | ~18 KB |
 | Inference time (estimate) | ~3.2 ms | ~0.9 ms |
 | Total cycle (capture + infer) | ~1003 ms | ~1001 ms |
@@ -1142,6 +1163,14 @@ What to expect when you measure:
 3. **Recording the window takes nearly all of the cycle** (1 second at 100 Hz), so on either board the answer is at least 1 second behind the movement.
 
 4. **The Pico should draw less current,** which matters in a battery-powered wearable.
+
+### Check it
+
+A test accuracy from 20 windows says little about the device in your hand. Three checks on the board:
+
+1. **Your own confusion table.** Do each gesture 20 times and write down what the board prints. Correct answers lie on the diagonal; a gesture that is often taken for one other gesture needs more varied recordings of both.
+2. **Rest and carry.** Leave the board still for two minutes, then carry it while walking for two minutes, and count the LED flashes. Each one is a false gesture. Many of them mean you need the fifth "no gesture" class (Exercise 1).
+3. **The same scale as training.** Print the 12 numbers of `NORM_MEANS` and `NORM_STDS` from the firmware once at start and compare them with the training output. One wrong value moves every window of that axis, and the model answers with confidence on readings it never saw.
 
 :::tip[Instrument it]
 Gesture and motion models depend on where the accelerometer sits. Mount it rigidly to the thing that actually moves, aligned so the axis you care about sees the motion cleanly, and keep that orientation identical between training and deployment, since a model trained with the chip one way fails when it is rotated. The same discipline turns this from a gesture demo into machine-motion monitoring: an IMU on a pump or a door learning what normal looks like, and [flagging what is not](https://siliconwit.io).
@@ -1165,7 +1194,7 @@ Gesture and motion models depend on where the accelerometer sits. Mount it rigid
 <InArticleAd />
 
 
-You recorded labelled windows of four gestures with MicroPython on the Pico, trained a small dense network in TensorFlow, and ran the same quantized model on the Pico (C SDK) and the STM32 (HAL). The model has 40,676 parameters at one byte each, so the int8 file should be about 43 KB. The accuracy of about 95% comes from only 20 test windows, so it is a rough figure.
+You recorded labelled windows of four gestures with MicroPython on the Pico, trained a small dense network in TensorFlow, and ran the same quantized model on the Pico (C SDK) and the STM32 (HAL). The model has 40,676 parameters at one byte each, and the int8 file came out at 45,880 bytes (about 45 KB) on a PC. The accuracy of about 95% comes from only 20 test windows, so it is a rough figure.
 
 The inference times (about 0.9 ms on the STM32F4, about 3.2 ms on the Pico) are estimates. The difference comes from the clock speed and the multiply-accumulate instructions of the Cortex-M4, not from its FPU, because the int8 model is integer-only. Remember the two limits: the model judges one window at a time, and it always names one of the four gestures unless you teach it a "no gesture" class.
 

@@ -180,10 +180,9 @@ DURATION_S = 10  # collect 10 seconds per recording
 
 print("MPU6050 data collection ready.")
 print(f"Sample rate: {SAMPLE_RATE_HZ} Hz, Duration: {DURATION_S} s")
-print("Press the BOOT button or send 'start' to begin recording.")
 print("")
 
-# Wait for trigger
+# Wait for Enter in the serial terminal (input() reads the REPL)
 input("Press Enter to start recording...")
 
 print("timestamp,accX,accY,accZ")
@@ -293,7 +292,8 @@ void app_main(void) {
         int64_t elapsed_ms = (esp_timer_get_time() - start_us) / 1000;
         printf("%lld,%.4f,%.4f,%.4f\n", elapsed_ms, ax, ay, az);
 
-        // Wait for next sample
+        // Wait for next sample. Needs CONFIG_FREERTOS_HZ=1000: at the default
+        // 100 Hz the wait rounds down to 10 ms steps and the timing jitters
         int64_t target_us = start_us + ((int64_t)(i + 1) * interval_us);
         int64_t now_us = esp_timer_get_time();
         if (target_us > now_us) {
@@ -473,7 +473,7 @@ The extracted library has this structure:
   - model_variables.h
 - tflite-model/
   - trained_model_compiled.cpp
-- edge-impulse-sdk.cmake
+- CMakeLists.txt
 </FileTree>
 
 ## Step 7: Integrating with ESP-IDF
@@ -481,16 +481,18 @@ The extracted library has this structure:
 <InArticleAd />
 
 
-Create a new ESP-IDF project and copy the Edge Impulse library into the `components` directory.
+The library is not an ESP-IDF component, and the model folders must be on the include path. Start from Edge Impulse's own project, `example-standalone-inferencing-espressif-esp32` on GitHub: copy the three folders from the zip into its root and replace `main/main.cpp` with the program below. Its `sdkconfig` already sets a 1000 Hz tick (`CONFIG_FREERTOS_HZ=1000`, which the sampling loop needs) and a 12 KB main task stack (the default 3.5 KB is too small for the classifier).
 
 <FileTree>
 - motion_classifier/
   - CMakeLists.txt
+  - sdkconfig
   - main/
     - CMakeLists.txt
     - main.cpp
-  - components/
-    - edge-impulse-sdk/
+  - edge-impulse-sdk/
+  - model-parameters/
+  - tflite-model/
 </FileTree>
 
 ### Inference Firmware
@@ -567,23 +569,27 @@ extern "C" void app_main(void) {
     led_init();
 
     ESP_LOGI(TAG, "Motion classifier starting");
+    // EI_CLASSIFIER_INTERVAL_MS may be a float, so cast before %d
     ESP_LOGI(TAG, "Window size: %d ms, Features: %d, Labels: %d",
-             EI_CLASSIFIER_INTERVAL_MS * EI_CLASSIFIER_RAW_SAMPLE_COUNT,
-             EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE,
-             EI_CLASSIFIER_LABEL_COUNT);
+             (int)(EI_CLASSIFIER_INTERVAL_MS * EI_CLASSIFIER_RAW_SAMPLE_COUNT),
+             (int)EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE,
+             (int)EI_CLASSIFIER_LABEL_COUNT);
 
     int interval_ms = 1000 / SAMPLE_RATE_HZ;
     int window_samples = EI_CLASSIFIER_RAW_SAMPLE_COUNT;  // 100 for 2s at 50 Hz
 
     while (1) {
-        // Collect one window of accelerometer data
+        // Collect one window of accelerometer data. vTaskDelayUntil keeps
+        // a fixed 20 ms period (with CONFIG_FREERTOS_HZ=1000), so the
+        // window holds 2 s of motion, as in training
+        TickType_t last_wake = xTaskGetTickCount();
         for (int i = 0; i < window_samples; i++) {
             float ax, ay, az;
             read_accel(&ax, &ay, &az);
             features[i * 3 + 0] = ax;
             features[i * 3 + 1] = ay;
             features[i * 3 + 2] = az;
-            vTaskDelay(pdMS_TO_TICKS(interval_ms));
+            vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(interval_ms));
         }
 
         // Run classifier
@@ -610,6 +616,11 @@ extern "C" void app_main(void) {
                 max_val = result.classification[ix].value;
                 max_label = result.classification[ix].label;
             }
+        }
+
+        // Below the 0.6 confidence set in Studio, report no class
+        if (max_val < 0.6f) {
+            max_label = "uncertain";
         }
 
         ESP_LOGI(TAG, "=> %s (%.1f%%) | DSP: %d ms, Classification: %d ms",
@@ -669,26 +680,28 @@ Here the answer only drives an LED. If a classifier ever switches a motor, a hea
 <InArticleAd />
 
 
-The Edge Impulse SDK integrates with ESP-IDF through CMake. Your top-level `CMakeLists.txt` needs to include the SDK:
+The example's top-level file is an ordinary ESP-IDF project file; the part of `main/CMakeLists.txt` that matters, shortened:
 
 ```cmake
 # motion_classifier/CMakeLists.txt
 cmake_minimum_required(VERSION 3.16)
-
-set(EXTRA_COMPONENT_DIRS "components")
-
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(motion_classifier)
 ```
 
 ```cmake
-# motion_classifier/main/CMakeLists.txt
-idf_component_register(
-    SRCS "main.cpp"
-    INCLUDE_DIRS "."
-    REQUIRES edge-impulse-sdk
-)
+# motion_classifier/main/CMakeLists.txt (from the Edge Impulse example, shortened)
+set(EI_SDK_FOLDER ../edge-impulse-sdk)
+include(${EI_SDK_FOLDER}/cmake/utils.cmake)
+# collect every .cpp, .cc and .c of the SDK and the model
+RECURSIVE_FIND_FILE_EXCLUDE_DIR(SOURCE_FILES "../edge-impulse-sdk" "CMSIS" "*.cpp")
+RECURSIVE_FIND_FILE_EXCLUDE_DIR(MODEL_FILES "../tflite-model" "CMSIS" "*.cpp")
+# ... the same for *.cc and *.c, then:
+idf_component_register(SRCS "main.cpp" ${SOURCE_FILES} ${MODEL_FILES}
+                       INCLUDE_DIRS ".." "../tflite-model" "../model-parameters" ${EI_SDK_FOLDER})
 ```
+
+Use the example's file as it is. The SDK is compiled as part of `main`, so there is no component to `REQUIRES`.
 
 ```bash
 cd motion_classifier
@@ -733,6 +746,13 @@ The "Features: 300" in the log is the count of raw values in a window, before th
 DSP (digital signal processing) is here the spectral feature extraction. It takes longer than the inference, because the network is small.
 
 The 12 to 20 ms is computing time only. The firmware first records a full window, so a new answer comes every 2 seconds. The flash and RAM values are estimates. Studio shows its own figures for your model on the Deployment page.
+
+### Check it
+
+1. **Same features, same scores.** In Studio, copy the raw features of one test sample (**Live classification**), paste them into `features[]`, skip the sensor loop once, and run. The scores must match Studio's to about two decimal places; if not, the build is wrong, not the data.
+2. **Live test.** Do each activity for one minute (30 windows), board mounted as in training, and count right answers: about 27 of 30 matches a 90% test accuracy. Far fewer means the live data differ: mounting, person or sample rate. Check the rate first: log timestamps must be 2,000 ms apart plus the computing time.
+
+A window below 0.6 is logged as "uncertain" and leaves the LED as it was. Many of them mean a motion the model was never taught.
 
 ## Accuracy Evaluation
 

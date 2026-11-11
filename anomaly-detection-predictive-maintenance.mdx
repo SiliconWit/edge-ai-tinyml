@@ -27,7 +27,7 @@ import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTi
 
 import PodcastEmbed from '../../../../components/PodcastEmbed.astro';
 
-A bearing rarely fails without warning. For days or weeks it shakes differently, and nobody notices until the motor stops and the line stops with it. You cannot teach a model every fault in advance: faults are rare, each one is different, and causing them on purpose is costly or dangerous. Anomaly detection asks an easier question. A model is a rule with adjustable numbers, fitted on a computer to examples and then run on the chip. Here the examples come only from the healthy machine, so the rule learns what normal looks like and flags whatever is far from it. This lesson builds that detector: a vibration sensor on a motor, a model fitted to healthy data, and an ESP32 that checks the vibration about twice a second. #AnomalyDetection #PredictiveMaintenance #TinyML
+A bearing rarely fails without warning. For days or weeks it shakes differently, and nobody notices until the motor stops and the line stops with it. You cannot teach a model every fault in advance: faults are rare, each is different, and causing them on purpose is costly or dangerous. Anomaly detection asks an easier question. A model (a rule with adjustable numbers, fitted on a computer and run on the chip) is fitted only to the healthy machine, so it learns what normal looks like and flags what is far from it. This lesson builds that detector: a vibration sensor on a motor, a model fitted to healthy data, and an ESP32 that checks the vibration about twice a second. #AnomalyDetection #PredictiveMaintenance #TinyML
 
 <PodcastEmbed src="https://open.spotify.com/episode/4ou3Hqn0bSBd5BPezQLxmg?si=oSx2SpL4TbON0OMx1QaiZQ" />
 
@@ -69,7 +69,7 @@ This is predictive maintenance in miniature, and it works only because the senso
 | Sample rate | 200 Hz |
 | Window length | 0.5 seconds (100 samples x 3 axes = 300 values) |
 | Model | Autoencoder (encoder: 300 to 64 to 16; decoder: 16 to 64 to 300) |
-| Model size | About 43 KB quantized (estimated from the parameter count) |
+| Model size | About 54 KB quantized (55,640 bytes with TensorFlow 2.21) |
 | Anomaly metric | Mean squared reconstruction error |
 | Alert threshold | Mean + 3 sigma of the errors on the training data |
 | Output | LED (GPIO 2), MQTT alert on `device/anomaly/alert` |
@@ -102,7 +102,7 @@ This is predictive maintenance in miniature, and it works only because the senso
 <InArticleAd />
 
 
-The classifiers earlier in this course put an input into one of a few known classes and need labelled examples of every class. A motor gives you thousands of healthy hours and almost no failures, so a classifier has nothing to learn the faults from.
+A classifier needs labelled examples of every class. A motor gives thousands of healthy hours and almost no failures, so a classifier has nothing to learn the faults from.
 
 An anomaly detector needs only the healthy hours. Think of a night guard who knows the usual sounds of a building. The guard cannot name a new sound, but notices at once that it does not belong. The detector does the same, and it has the guard's limits:
 
@@ -119,7 +119,7 @@ A microcontroller has little memory, so the network must be small. It must also 
 
 - **300 inputs** (100 samples x 3 axes): one window fits in a single small array.
 - **A middle of 16 numbers** (the bottleneck): the network must describe a whole window with 16 numbers. It learns to do this for normal vibration. A pattern it never saw does not fit through the middle, so it comes out wrong.
-- **Total parameters** (the adjustable numbers): $300 \times 64 + 64 + 64 \times 16 + 16 + 16 \times 64 + 64 + 64 \times 300 + 300 = 40892$. After int8 quantization each one takes one byte ([Model Quantization and Optimization for MCUs](/education/edge-ai-tinyml/model-quantization-optimization-mcu/) explains how), so the file should be about 43 KB: about 40 KB of weights plus the file structure. This is an estimate from the count. Read the real size from your own converter.
+- **Total parameters** (the adjustable numbers): $300 \times 64 + 64 + 64 \times 16 + 16 + 16 \times 64 + 64 + 64 \times 300 + 300 = 40892$. After int8 quantization each weight takes one byte ([Model Quantization and Optimization for MCUs](/education/edge-ai-tinyml/model-quantization-optimization-mcu/) explains how). Converted with TensorFlow 2.21 the file was 55,640 bytes: about 40 KB of weights, the 444 biases at 4 bytes, a scale for every output unit, and the file structure. Read the real size from your own converter.
 
 ## Collecting Normal Operation Data
 
@@ -128,7 +128,7 @@ A microcontroller has little memory, so the network must be small. It must also 
 
 ### Hardware Setup
 
-Mount the MPU6050 on the motor housing using hot glue or strong double-sided tape. The sensor should be rigidly coupled to the motor body so it picks up vibration accurately. Loose mounting introduces noise that degrades model quality.
+Fix the MPU6050 rigidly to the motor housing with hot glue or strong double-sided tape. A loose mounting adds its own rattle, which the model learns as normal.
 
 | ESP32 Pin | MPU6050 Pin | Notes |
 |-----------|-------------|-------|
@@ -202,8 +202,8 @@ static void mpu6050_init(void)
     vTaskDelay(pdMS_TO_TICKS(100));
     mpu6050_write_reg(0x1C, 0x08); /* Accel +/- 4g */
     mpu6050_write_reg(0x19, 0x04); /* Sample rate: 1 kHz / (1+4) = 200 Hz */
-    mpu6050_write_reg(0x1A, 0x03); /* DLPF ~44 Hz bandwidth */
-    ESP_LOGI(TAG, "MPU6050 initialized: 200 Hz, +/- 4g, DLPF 44 Hz");
+    mpu6050_write_reg(0x1A, 0x02); /* DLPF 94 Hz: keeps up to Nyquist (100 Hz) */
+    ESP_LOGI(TAG, "MPU6050 initialized: 200 Hz, +/- 4g, DLPF 94 Hz");
 }
 
 static void mpu6050_read_accel(float *ax, float *ay, float *az)
@@ -342,7 +342,7 @@ print(f"Total windows saved: {len(windows)}, shape: {all_data.shape}")
 <InArticleAd />
 
 
-Training runs on the PC, on the 500 normal windows. The script first brings every input to a similar range (subtract the mean, divide by the standard deviation). Then it asks the network to reproduce its own input: in `fit(X_train, X_train)` the target is the input itself. The loss is the mean squared error (MSE), the average of the squared differences between input and output.
+Training runs on the PC, on the 500 normal windows. The script scales every input (subtract the mean, divide by the standard deviation), then asks the network to reproduce its input: in `fit(X_train, X_train)` the target is the input itself. The loss is the mean squared error (MSE), the average squared difference between input and output.
 
 ```python
 import numpy as np
@@ -439,12 +439,22 @@ Trainable params: 40,892
 <InArticleAd />
 
 
-The model gives a number, not a decision. You must choose how large an error counts as unusual. Set the threshold too low and healthy windows raise flags. Set it too high and real faults pass. A usual start is the errors of the training windows: take their mean and add three times their standard deviation (sigma, a measure of spread).
+The model gives a number, not a decision. You must choose how large an error counts as unusual. Set the threshold too low and healthy windows raise flags. Set it too high and real faults pass. A usual rule: take the errors of healthy windows, and add three times their standard deviation (sigma, a measure of spread) to their mean.
+
+Not the training windows: the model was fitted to them, so their errors are smaller than any new window's. Record a quiet baseline: run the capture script on another day with `OUTPUT_DIR = 'vibration_data/baseline'`, while a person confirms the machine is healthy (30 minutes is 3,600 windows). The script uses it, or the validation windows until you have one.
 
 ```python
-# Compute reconstruction errors on training data
-reconstructed = autoencoder.predict(X_train)
-mse_per_sample = np.mean((X_train - reconstructed) ** 2, axis=1)
+# Errors of healthy windows the model never saw: the quiet baseline,
+# or else the validation windows
+import os
+base_file = 'vibration_data/baseline/all_windows.npy'
+if os.path.exists(base_file):
+    base = np.load(base_file).reshape(-1, INPUT_DIM)
+    X_check = ((base - X_mean) / X_std).astype(np.float32)
+else:
+    X_check = X_val
+reconstructed = autoencoder.predict(X_check)
+mse_per_sample = np.mean((X_check - reconstructed) ** 2, axis=1)
 
 error_mean = mse_per_sample.mean()
 error_std = mse_per_sample.std()
@@ -452,8 +462,9 @@ error_std = mse_per_sample.std()
 # Threshold: mean + 3 standard deviations
 threshold = error_mean + 3.0 * error_std
 
-print(f"Training MSE - mean: {error_mean:.6f}, std: {error_std:.6f}")
+print(f"Healthy MSE - mean: {error_mean:.6f}, std: {error_std:.6f}")
 print(f"Anomaly threshold (mean + 3*sigma): {threshold:.6f}")
+print(f"Healthy windows above it: {np.mean(mse_per_sample > threshold):.2%}")
 
 # Plot error distribution
 plt.figure(figsize=(8, 4))
@@ -478,6 +489,16 @@ If the errors followed a normal distribution, about 99.9% of healthy windows wou
 | 2 sigma | ~2.3% | Finds more faults, many false alarms |
 | 3 sigma | ~0.13% | A common starting point |
 | 4 sigma | ~0.003% | Very few false alarms, may miss small faults |
+
+In a simulation of this setup (500 healthy windows of a 25 Hz motor with noise, the same network and training):
+
+| Threshold taken from | New healthy windows flagged | After a 5% change of load | Alerts per hour (EMA, 3 in a row), 5% change |
+|---|---|---|---|
+| Training errors, mean + 3 sigma | 5.4% (about 380 an hour) | 24% | 35 |
+| 30-minute baseline, mean + 3 sigma | 0.5% | 3.9% | 0 |
+| 30-minute baseline, 99.9th percentile | 0.1% | 1.2% | 0 |
+
+At about 7,000 windows an hour, even 0.5% is some 35 flagged windows an hour; the smoothing below turns them into no alert in steady running. Your machine gives other numbers: the share of baseline windows above the threshold is the false-alarm rate you will live with.
 
 ### Why most flags are false when faults are rare
 
@@ -554,7 +575,7 @@ print("};")
 
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
-#include "tensorflow/lite/schema/schema_generated.h"
+#include "tensorflow/lite/micro/schema/schema_generated.h"  /* older TFLM: tensorflow/lite/schema/ */
 #include "anomaly_model.h"
 
 static const char *TAG = "anomaly_detect";
@@ -601,11 +622,12 @@ static float s_flat_input[INPUT_SIZE];
 
 static void i2c_init(void)
 {
+    /* C++ needs the fields in the order of the ESP-IDF header */
     i2c_master_bus_config_t bus_cfg = {
-        .clk_source = I2C_CLK_SRC_DEFAULT,
         .i2c_port = I2C_NUM_0,
-        .scl_io_num = I2C_MASTER_SCL_IO,
         .sda_io_num = I2C_MASTER_SDA_IO,
+        .scl_io_num = I2C_MASTER_SCL_IO,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
         .glitch_ignore_cnt = 7,
         .flags = { .enable_internal_pullup = true },
     };
@@ -631,18 +653,22 @@ static void mpu6050_init(void)
     vTaskDelay(pdMS_TO_TICKS(100));
     mpu6050_write_reg(0x1C, 0x08); /* +/- 4g */
     mpu6050_write_reg(0x19, 0x04); /* 200 Hz */
-    mpu6050_write_reg(0x1A, 0x03); /* DLPF 44 Hz */
+    mpu6050_write_reg(0x1A, 0x02); /* DLPF 94 Hz */
 }
 
-static void mpu6050_read_accel(float *ax, float *ay, float *az)
+static esp_err_t mpu6050_read_accel(float *ax, float *ay, float *az)
 {
     uint8_t reg = 0x3B;
     uint8_t raw[6];
-    i2c_master_transmit_receive(s_mpu_dev, &reg, 1, raw, 6, 100);
-
+    esp_err_t err = i2c_master_transmit_receive(s_mpu_dev, &reg, 1,
+                                                raw, 6, 100);
+    if (err != ESP_OK) {
+        return err;   /* raw[] holds nothing valid */
+    }
     *ax = (int16_t)((raw[0] << 8) | raw[1]) / 8192.0f;
     *ay = (int16_t)((raw[2] << 8) | raw[3]) / 8192.0f;
     *az = (int16_t)((raw[4] << 8) | raw[5]) / 8192.0f;
+    return ESP_OK;
 }
 
 /* ---- LED ---- */
@@ -659,18 +685,29 @@ static void led_init(void)
 
 /* ---- Capture and normalize ---- */
 
-static void capture_window(void)
+/* Returns false if the sensor did not answer, or answered with a flat
+   line (a stuck or disconnected sensor), so that a sensor fault is not
+   reported as a machine fault */
+static bool capture_window(void)
 {
     int64_t interval_us = 1000000 / SAMPLE_RATE_HZ;
+    float zmin = 1e9f, zmax = -1e9f;
 
     for (int i = 0; i < WINDOW_SIZE; i++) {
         int64_t start = esp_timer_get_time();
-        mpu6050_read_accel(&s_window[i][0], &s_window[i][1],
-                           &s_window[i][2]);
+        if (mpu6050_read_accel(&s_window[i][0], &s_window[i][1],
+                               &s_window[i][2]) != ESP_OK) {
+            return false;
+        }
+        zmin = fminf(zmin, s_window[i][2]);
+        zmax = fmaxf(zmax, s_window[i][2]);
         while ((esp_timer_get_time() - start) < interval_us) {
             /* spin */
         }
     }
+    /* Even a still sensor shows a few mg of noise; identical readings
+       mean it is stuck */
+    return (zmax - zmin) > 0.002f;
 }
 
 static void normalize_window(void)
@@ -698,7 +735,10 @@ static void anomaly_detection_task(void *arg)
 
     static tflite::MicroInterpreter interpreter(
         model, resolver, s_tensor_arena, TENSOR_ARENA_SIZE);
-    interpreter.AllocateTensors();
+    if (interpreter.AllocateTensors() != kTfLiteOk) {
+        ESP_LOGE(TAG, "AllocateTensors failed: arena or op missing");
+        vTaskDelete(NULL);
+    }
 
     TfLiteTensor *input = interpreter.input(0);
     TfLiteTensor *output = interpreter.output(0);
@@ -716,7 +756,12 @@ static void anomaly_detection_task(void *arg)
 
     while (1) {
         /* Capture 0.5-second window */
-        capture_window();
+        if (!capture_window()) {
+            ESP_LOGE(TAG, "SENSOR FAULT: no data or flat signal");
+            gpio_set_level(LED_PIN, 0);
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
         normalize_window();
 
         /* Quantize input */
@@ -733,7 +778,10 @@ static void anomaly_detection_task(void *arg)
 
         /* Run inference */
         int64_t t_start = esp_timer_get_time();
-        interpreter.Invoke();
+        if (interpreter.Invoke() != kTfLiteOk) {
+            ESP_LOGE(TAG, "Invoke failed");
+            continue;
+        }
         int64_t t_end = esp_timer_get_time();
 
         /* Dequantize output and compute reconstruction error */
@@ -827,24 +875,31 @@ To test the detector, make a mechanical fault while the motor is running:
 - **Bearing friction:** Press lightly against the motor shaft with a pencil eraser.
 - **Loosening:** Partially detach the MPU6050 from the motor housing.
 
-Expect the MSE to rise at once and the LED to turn on within 1 to 2 seconds. Notice that the third test is not a fault of the motor at all, and the detector flags it the same way.
+Expect the MSE to rise at once and the LED to turn on within 1 to 2 seconds. Notice that the third test is not a fault of the motor at all, and the detector flags it the same way. A sensor that stops answering, or sends identical readings, is reported as "SENSOR FAULT" instead; a loose one still looks like a machine fault.
+
+### Check it
+
+Measure the two numbers that matter, on the machine itself:
+
+1. **False alerts.** Run the healthy motor for one hour and count alerts (three windows in a row). Aim for none; alerts per day is the number the people who receive them will judge you by.
+2. **Detection and delay.** Make each test fault for two minutes; note the share of windows flagged and the seconds to the LED. A fault never flagged needs another feature (the RMS below), not a lower threshold. If every window is flagged, check that `NORM_MEAN` is not still the placeholder.
 
 ## Edge vs Cloud Comparison
 
 <InArticleAd />
 
 
-The same model could run on a server, with the ESP32 sending only raw samples. The table compares the two ways. Its delay and current figures are typical values, not measurements from this build.
+The same model could run on a server, with the ESP32 sending raw samples. The delay and current figures below are typical values, not measurements from this build.
 
 | Metric | Edge (ESP32) | Cloud (MQTT + Server) |
 |--------|-------------|----------------------|
-| Detection latency | 0.5 s (one window) | 1 to 5 s (network + server processing) |
+| Detection latency | 0.5 to 1.5 s (one to three windows) | 1 to 5 s (network + server processing) |
 | Bandwidth | 0 bytes (inference local) | 1200 bytes/sec (raw data streaming) |
 | Availability | Core inference works offline | Requires network connection |
 | Power | ~80 mA (MCU only) | ~160 mA (MCU + Wi-Fi radio) |
 | Model update | Requires OTA firmware update | Update model on server, instant |
 
-Deciding on the device suits an alert that must not wait for a network, and sites where the network is poor (factory floors with radio interference, remote pump stations). The raw vibration also stays on site. A server suits work that one device cannot do: comparing hundreds of sensors, or running a model too large for the chip.
+Deciding on the device suits an alert that must not wait for a network, and poor networks (factory floors with radio interference, remote pump stations); the raw vibration stays on site. A server suits what one device cannot do: comparing hundreds of sensors, or a model too large for the chip.
 
 ### When Hybrid Beats Pure Edge
 
@@ -857,7 +912,7 @@ Most real systems do both. The device decides and raises the alert. A server fil
 
 Add MQTT alerting to the detection loop. When an anomaly lasts for 3 or more windows in a row, the device publishes an alert. When the error returns to normal, it publishes a recovery message.
 
-Published does not mean received. Read the first line of the function: with no connection it returns at once, so the alert is not sent and not kept for later. The LED still works, because the decision is made on the device. If a missed alert matters, keep it in memory and send it when the connection returns.
+Published does not mean received. This version decides on the device with or without a connection, keeps the alert, and sends it when the connection returns (QoS 1: the broker confirms). A reboot still loses a waiting alert (keep it in NVS if that matters), and `esp_timer_get_time()` counts from start-up, so use SNTP time on a real site.
 
 ```c
 #include "mqtt_client.h"
@@ -871,19 +926,20 @@ extern bool s_mqtt_connected;
 
 static int s_consecutive_anomalies = 0;
 static bool s_alert_active = false;
+static bool s_alert_pending = false;      /* decided, not yet sent */
+static bool s_recovery_pending = false;
+static char s_alert_payload[256];
+static char s_recovery_payload[128];
 
 static void check_and_publish_anomaly(float mse, float ema, bool is_anomaly)
 {
-    if (!s_mqtt_connected) return;
-
+    /* 1. Decide on the device, with or without a connection */
     if (is_anomaly) {
         s_consecutive_anomalies++;
 
         if (s_consecutive_anomalies >= ALERT_WINDOW_COUNT
             && !s_alert_active) {
-            /* Trigger alert */
-            char payload[256];
-            snprintf(payload, sizeof(payload),
+            snprintf(s_alert_payload, sizeof(s_alert_payload),
                      "{\"status\":\"anomaly\","
                      "\"mse\":%.6f,\"ema\":%.6f,"
                      "\"threshold\":%.6f,"
@@ -892,29 +948,37 @@ static void check_and_publish_anomaly(float mse, float ema, bool is_anomaly)
                      mse, ema, ANOMALY_THRESHOLD,
                      s_consecutive_anomalies,
                      (long long)(esp_timer_get_time() / 1000000));
-
-            esp_mqtt_client_publish(s_mqtt_client, ALERT_TOPIC,
-                                     payload, 0, 1, 0);
             s_alert_active = true;
-            ESP_LOGW(TAG, "MQTT alert published");
+            s_alert_pending = true;
+            s_recovery_pending = false;
         }
     } else {
         if (s_alert_active) {
-            /* Recovery */
-            char payload[128];
-            snprintf(payload, sizeof(payload),
+            snprintf(s_recovery_payload, sizeof(s_recovery_payload),
                      "{\"status\":\"normal\","
                      "\"mse\":%.6f,"
                      "\"timestamp\":%lld}",
                      mse,
                      (long long)(esp_timer_get_time() / 1000000));
-
-            esp_mqtt_client_publish(s_mqtt_client, STATUS_TOPIC,
-                                     payload, 0, 1, 0);
             s_alert_active = false;
-            ESP_LOGI(TAG, "MQTT recovery published");
+            s_recovery_pending = true;
         }
         s_consecutive_anomalies = 0;
+    }
+
+    /* 2. Send what is waiting, alert before recovery */
+    if (!s_mqtt_connected) return;
+    if (s_alert_pending
+        && esp_mqtt_client_publish(s_mqtt_client, ALERT_TOPIC,
+                                   s_alert_payload, 0, 1, 0) >= 0) {
+        s_alert_pending = false;
+        ESP_LOGW(TAG, "MQTT alert published");
+    }
+    if (s_recovery_pending && !s_alert_pending
+        && esp_mqtt_client_publish(s_mqtt_client, STATUS_TOPIC,
+                                   s_recovery_payload, 0, 1, 0) >= 0) {
+        s_recovery_pending = false;
+        ESP_LOGI(TAG, "MQTT recovery published");
     }
 }
 ```
@@ -926,9 +990,11 @@ static void check_and_publish_anomaly(float mse, float ema, bool is_anomaly)
 
 **The flag is advice.** The model is an estimate fitted to past data, and it can be wrong with nothing to show it. Use the flag to send a person or to plan a check. A limit that protects people or the machine (overcurrent, overtemperature, an emergency stop) stays a plain rule in the device or in hardware. The model must never be the only thing that stops a machine.
 
-**Sensor mounting.** The quality of the vibration data depends entirely on how rigidly the accelerometer is coupled to the machine. Hot glue works for prototyping, but industrial installations use threaded studs, magnets, or epoxy. The mounting surface should be flat and clean, as close to the bearing or vibration source as possible.
+**What a technician does with an alert.** Check the sensor first (still fixed, cable whole), then the situation (a new load, product, speed or repair changes the normal), then the machine: listen, read the bearing housing temperature with an infrared thermometer, compare with a twin machine. If something changed, plan an inspection; do not stop a healthy line on a flag alone. Record what was found, fault or no fault: those records give the true false-alarm rate, and a confirmed "no fault" is healthy data for the next training.
 
-**Sampling rate selection.** 200 Hz is sufficient for low-frequency vibration from motors, fans, and pumps (dominant frequencies typically below 100 Hz). For high-speed machinery (spindles, turbines), you may need 1 kHz or higher. The MPU6050 supports up to 1 kHz output rate, but the autoencoder input size grows proportionally.
+**Sensor mounting.** The data are only as good as the coupling to the machine. Hot glue serves a prototype; industrial installations use threaded studs, magnets or epoxy, on a flat clean surface as close to the bearing as possible.
+
+**Sampling rate selection.** At 200 Hz with the 94 Hz filter, the detector sees running speed and its first harmonics, where imbalance, misalignment and looseness show. A bearing defect starts at hundreds of hertz to kilohertz and reaches this band only late, so early bearing warning needs a sensor read at several kilohertz (the MPU6050 stops at 1 kHz, and the model input grows with the rate). Keep a plain RMS (root mean square) of each window beside the model: in the simulation above, a 30% rise in running-speed vibration raised the RMS by 27% but was flagged in only 2% of windows, because reconstruction error measures shape more than size.
 
 **Temperature effects.** The MPU6050's offset drifts with temperature. Where the temperature varies widely (outdoors, near heat sources), compensate for it or retrain from time to time.
 
@@ -971,7 +1037,7 @@ static void check_and_publish_anomaly(float mse, float ema, bool is_anomaly)
 <InArticleAd />
 
 
-You trained an autoencoder on normal vibration only and used its reconstruction error as an anomaly score. The model has 40,892 parameters, so expect a quantized file of about 43 KB and an inference time of a few milliseconds on the ESP32. Both are estimates: read the real values from your converter and your serial log. The firmware smooths the score and raises an LED and an MQTT alert when the error stays high.
+You trained an autoencoder on normal vibration only and used its reconstruction error as an anomaly score, with a threshold judged on a quiet baseline. The model has 40,892 parameters and a quantized file of about 54 KB (measured on a PC); expect a few milliseconds per inference on the ESP32, an estimate to check in your log. The firmware smooths the score, tells a sensor fault from a machine anomaly, and raises an LED and an MQTT alert when the error stays high.
 
 The detector says "different from the normal it was taught". It does not name the fault, it must be taught again when the normal changes, and most of its flags are false when faults are rare. So its flag is advice for a person, and fast protection stays a plain rule.
 

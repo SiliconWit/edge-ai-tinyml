@@ -27,7 +27,7 @@ import EdgeAiTinymlComments from '../../../../components/edge-ai-tinyml/EdgeAiTi
 
 import PodcastEmbed from '../../../../components/PodcastEmbed.astro';
 
-A sensor that sends every reading to a server and waits for the answer has three weaknesses. The answer arrives late, the link costs data and power, and when the network stops the device stops deciding. For a wake word, a gesture or a fault alert, a delay of a quarter of a second is often too long. The other way is to compute the answer in the microcontroller itself: it comes in milliseconds or less, no network is needed, and the readings never leave the site. The price is that the model must fit in the flash and RAM of the chip. This lesson takes you along the whole path once. On your PC you fit a small model to a sine wave with TensorFlow, store its numbers in 8 bits, and turn it into a C array. Then you run it on an ESP32 and measure the time of each prediction. #TinyML #EdgeAI #ESP32
+A sensor that sends every reading to a server and waits for the answer gets it late, pays for the link in data and power, and stops deciding when the network stops. For a wake word, a gesture or a fault alert, a quarter of a second is often too long. Computed in the microcontroller itself, the answer comes in milliseconds or less, with no network, and the readings never leave the site. The price: the model must fit in the chip's flash and RAM. This lesson walks the whole path once. On your PC you fit a small model to a sine wave with TensorFlow, store its numbers in 8 bits and turn it into a C array; then you run it on an ESP32 and time each prediction. #TinyML #EdgeAI #ESP32
 
 <PodcastEmbed src="https://open.spotify.com/episode/3uKvHkqdawlJvfU1raLvil?si=MFubSDDURoKfzSWQ-6O0zg" />
 
@@ -57,7 +57,7 @@ The time on the MCU grows with the model: tens of microseconds for one inference
 
 ### Why run the model on the device?
 
-Beyond the short delay and the independence from the network, there are three more gains. Raw sensor data stay on the device, and only results are sent. A Cortex-M4 that runs one inference a second draws a few milliamps. And a 2 USD MCU does work that would otherwise need a 50 USD single-board computer or a paid cloud service.
+Three more gains: raw data stay on the device and only results are sent; a Cortex-M4 running one inference a second draws a few milliamps; and a 2 USD MCU does work that would otherwise need a 50 USD single-board computer or a paid cloud service.
 
 The cost is size. A model that fits in kilobytes is less accurate than a large model on a server, and changing it means updating the firmware.
 
@@ -72,7 +72,7 @@ The model shares flash and RAM with your firmware, and the processor sets how lo
 |-----|-----|-------|-------|------|-----|-------------|
 | ESP32 (Xtensa LX6) | Dual-core | 240 MHz | 4 MB | 520 KB | Yes | Wi-Fi/BLE + ML |
 | STM32F4 (Cortex-M4F) | Single-core | 168 MHz | 1 MB | 192 KB | Yes | Industrial ML |
-| RPi Pico (Cortex-M0+) | Dual-core | 133 MHz | 2 MB | 264 KB | No | Low-cost ML |
+| RPi Pico (Cortex-M0+) | Dual-core | 125 MHz (SDK default) | 2 MB | 264 KB | No | Low-cost ML |
 | nRF52840 (Cortex-M4F) | Single-core | 64 MHz | 1 MB | 256 KB | Yes | BLE + ML |
 
 **Practical limits for model size:**
@@ -95,7 +95,7 @@ Every project in this course follows six steps. The first four run on the PC and
    The model must be small enough for the chip.
 
 3. **Convert to TensorFlow Lite (.tflite).**
-   The converter writes one binary file. At this step, quantization stores each number in 8 bits in place of 32, so the file is smaller and inference is faster.
+   The converter writes one binary file. At this step, quantization stores each number in 8 bits in place of 32, so a model of thousands of weights shrinks up to four times and runs faster.
 
 4. **Convert .tflite to a C array.**
    The `xxd` utility (or a Python script) turns the binary into a `const unsigned char[]` that compiles into firmware.
@@ -112,7 +112,7 @@ Every project in this course follows six steps. The first four run on the PC and
 <InArticleAd />
 
 
-We will train a tiny neural network to approximate `y = sin(x)` over the range `[0, 2*pi]`. A neural network is a model built from layers. Each layer multiplies its inputs by weights, adds a bias, and passes the sums on. The weights and biases are the adjustable numbers. This is the usual first TinyML program: it needs only an ESP32 and a serial monitor, and it uses every step of the pipeline.
+We will train a tiny neural network to approximate `y = sin(x)` over `[0, 2*pi]`. A neural network is built from layers; each multiplies its inputs by weights, adds a bias, and passes the sums on. The weights and biases are the adjustable numbers. This usual first TinyML program needs only an ESP32 and a serial monitor, and uses every step of the pipeline.
 
 ### Step 1: Train the Sine Model in Python
 
@@ -202,13 +202,13 @@ print(f"Output scale: {output_scale}, zero_point: {output_zero_point}")
 # Test a few values
 test_x = np.array([0.0, 0.5, 1.0, 1.57, 3.14, 4.71, 6.28], dtype=np.float32)
 for x in test_x:
-    # Quantize input
-    x_q = np.int8(np.round(x / input_scale + input_zero_point))
+    # Quantize input; clip, or an x outside the converter's range wraps around
+    x_q = np.int8(np.clip(np.round(x / input_scale + input_zero_point), -128, 127))
     interpreter.set_tensor(input_details[0]['index'], np.array([[x_q]], dtype=np.int8))
     interpreter.invoke()
     y_q = interpreter.get_tensor(output_details[0]['index'])[0][0]
-    # Dequantize output
-    y_pred = (y_q - output_zero_point) * output_scale
+    # Dequantize output; int() first, or NumPy overflows in int8
+    y_pred = (int(y_q) - output_zero_point) * output_scale
     y_actual = np.sin(x)
     print(f"x={x:.2f}  predicted={y_pred:.4f}  actual={y_actual:.4f}  error={abs(y_pred - y_actual):.4f}")
 ```
@@ -220,7 +220,11 @@ pip install tensorflow numpy
 python train_sine_model.py
 ```
 
-You should see a model summary showing 321 parameters ($1 \times 16 + 16 = 32$, $16 \times 16 + 16 = 272$, and $16 \times 1 + 1 = 17$) and the size of the TFLite file. We did not measure that size. From the parameter count we estimate 2 KB to 4 KB, most of it the description of the layers. The validation MAE (mean absolute error) should be under 0.15.
+You should see a model summary showing 321 parameters ($1 \times 16 + 16 = 32$, $16 \times 16 + 16 = 272$, and $16 \times 1 + 1 = 17$) and the size of the TFLite file. With TensorFlow 2.21 the file was 3,464 bytes, most of it the description of the layers. The validation MAE (mean absolute error) should be under 0.15 (the label noise keeps it above about 0.08). Training starts from random weights, and in three of our eleven runs it stuck near 0.30, fitting only part of the wave; run the script again if you see that.
+
+The printed input scale and zero point (for example 0.0243 and -128) turn x into an int8: $q = x / \text{scale} + \text{zero point}$. So 127 means x = 255 × 0.0243 = 6.20, the largest x the converter saw; a larger x has no code, so the script clips.
+
+If your TensorFlow no longer has `tf.lite.Interpreter`, use `pip install ai-edge-litert` and `from ai_edge_litert.interpreter import Interpreter` (LiteRT is the new name of TensorFlow Lite).
 
 ### Step 2: Convert .tflite to a C Header
 
@@ -335,7 +339,8 @@ The TFLM API is C++, so the firmware is in `main.cc`. ESP-IDF calls `app_main` f
 
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
 #include "tensorflow/lite/micro/micro_interpreter.h"
-#include "tensorflow/lite/schema/schema_generated.h"
+// Older esp-tflite-micro versions: tensorflow/lite/schema/schema_generated.h
+#include "tensorflow/lite/micro/schema/schema_generated.h"
 
 #include "sine_model_data.h"
 
@@ -357,11 +362,13 @@ extern "C" void app_main(void) {
         return;
     }
 
-    // Register only the ops this model uses (keeps binary small)
-    static tflite::MicroMutableOpResolver<3> resolver;
-    resolver.AddFullyConnected();
-    resolver.AddRelu();
-    resolver.AddQuantize();
+    // Register only the ops this model uses (keeps binary small).
+    // The converter folds each ReLU into its fully connected layer.
+    static tflite::MicroMutableOpResolver<1> resolver;
+    if (resolver.AddFullyConnected() != kTfLiteOk) {
+        ESP_LOGE(TAG, "Could not register FullyConnected");
+        return;
+    }
 
     // Build the interpreter
     static tflite::MicroInterpreter interpreter(model, resolver,
@@ -402,9 +409,11 @@ extern "C" void app_main(void) {
     for (int i = 0; i < num_points; i++) {
         float x = (2.0f * M_PI * i) / num_points;
 
-        // Quantize the input
-        int8_t x_quantized = (int8_t)(roundf(x / input_scale) + input_zero_point);
-        input->data.int8[0] = x_quantized;
+        // Quantize the input, clamped so it cannot wrap around
+        int32_t q = (int32_t)roundf(x / input_scale) + input_zero_point;
+        if (q < -128) q = -128;
+        if (q > 127) q = 127;
+        input->data.int8[0] = (int8_t)q;
 
         // Run inference and time it
         int64_t start = esp_timer_get_time();
@@ -454,16 +463,24 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 ### Expected Output
 
-The serial output is a table of 50 points. Expect these values on an ESP32 at 240 MHz (the sizes are estimates, so trust your own output):
+The serial output is a table of 50 points. Expect these values on an ESP32 at 240 MHz (the time and the arena are estimates, so trust your own output):
 
 | Metric | Expected value |
 |--------|---------------|
-| Model size (int8 .tflite) | 2.4 KB to 3.5 KB (estimate) |
+| Model size (int8 .tflite) | about 3.4 KB (3,464 bytes with TensorFlow 2.21) |
 | Tensor arena used | ~1.2 KB (estimate) |
-| Average inference time | 30 to 80 microseconds |
-| Average absolute error | 0.05 to 0.15 |
+| Average inference time | 30 to 80 microseconds (estimate) |
+| Average absolute error | 0.015 to 0.05 (three good training runs on a PC) |
 
 At 50 microseconds an inference, the ESP32 could make 20,000 predictions a second. That holds only for a model this small.
+
+### Check it
+
+1. **Same model, same answer.** The chip's ninth point is x = 1.005. Put 1.005 in `test_x` and run the script: the PC and the chip should agree within one output step (about 0.008). A larger difference means an error in the quantize or dequantize lines.
+2. **The right file.** "Model size" must equal the size of `sine_model_int8.tflite` (`ls -l`); if not, the array is from an older model.
+3. **The arena.** Set `kTensorArenaSize` to the printed arena size plus 16 bytes and check that `AllocateTensors()` still succeeds.
+
+In the field the input is a sensor reading, and it can leave the training range. The clamp stops the int8 code from wrapping, but outside its range the model knows nothing. Treat such an input as "no answer".
 
 ## Understanding the TFLM Components
 
@@ -477,13 +494,11 @@ A `.tflite` file is a FlatBuffer, a binary format that a program reads in place 
 ### The Op Resolver
 
 ```cpp
-static tflite::MicroMutableOpResolver<3> resolver;
+static tflite::MicroMutableOpResolver<1> resolver;
 resolver.AddFullyConnected();
-resolver.AddRelu();
-resolver.AddQuantize();
 ```
 
-An op (operation) is one kind of calculation in the model, such as a fully connected layer. The op resolver tells the interpreter which code runs each op. `<3>` is the largest number of ops, and each `Add...()` call links in the code for one. Register only the ops your model uses: `AllOpsResolver` links them all and adds 100 KB or more.
+An op (operation) is one kind of calculation in the model, such as a fully connected layer. The op resolver tells the interpreter which code runs each op. `<1>` is the largest number of ops, and each `Add...()` call links in the code for one. This model needs one: the converter merges each ReLU into its layer, and int8 input and output need no quantize op. A missing op makes `AllocateTensors()` fail with a message that names it. The old `AllOpsResolver`, now removed from TFLM, linked every op and added 100 KB or more.
 
 ### The Tensor Arena
 
@@ -492,9 +507,7 @@ constexpr int kTensorArenaSize = 4 * 1024;
 alignas(16) static uint8_t tensor_arena[kTensorArenaSize];
 ```
 
-The interpreter never calls `malloc`. A device that runs for months must not run out of memory, so all working memory comes from this one array: the input tensor, the output tensor and the results between layers. `alignas(16)` places it on a 16-byte boundary, which fast vector instructions need.
-
-If the arena is too small, `AllocateTensors()` fails at start, where you can see it. If it is too large, you waste RAM. Print `interpreter.arena_used_bytes()` and set the size a little above it.
+The interpreter never calls `malloc`: a device that runs for months must not run out of memory, so the input, the output and the results between layers all come from this one array. `alignas(16)` puts it on the 16-byte boundary that fast vector instructions need. Too small, and `AllocateTensors()` fails at start, where you see it; too large wastes RAM. Print `interpreter.arena_used_bytes()` and set the size a little above it.
 
 ### The Interpreter
 
@@ -505,17 +518,17 @@ The `MicroInterpreter` reads the model and places the tensors in the arena. On e
 <InArticleAd />
 
 
-The model was trained with float32 numbers, and the converter stored every weight in 8 bits. An activation is a result between two layers. The values are estimates for this model:
+The model was trained with float32 numbers, and the converter stored every weight in 8 bits. An activation is a result between two layers. Sizes and errors were measured with TensorFlow 2.21 (one run, error against the true sine at the firmware's 50 points); speed and RAM are estimates:
 
 | Property | Float32 Model | Int8 Model |
 |----------|---------------|------------|
 | Weight precision | 32-bit float | 8-bit integer |
-| Model file size | ~3.5 KB | ~2.5 KB |
+| Model file size | 3,252 bytes | 3,464 bytes |
 | Inference speed on ESP32 | ~120 us | ~50 us |
 | RAM for activations | ~4 KB | ~1.2 KB |
-| Accuracy (MAE) | ~0.05 | ~0.08 |
+| Mean error | 0.028 | 0.032 |
 
-The int8 model is smaller and faster, and its error is a little higher. The file shrinks by much less than four times, because most of so small a file describes the layers. Here the loss of accuracy does not matter. For larger models it needs care, as the lesson on [model quantization](/education/edge-ai-tinyml/model-quantization-optimization-mcu/) shows.
+The int8 model is faster on a chip with fast integer routines, and its error is a little higher. Its file is not smaller: the 321 numbers shrink from 1,284 bytes to 420 (biases stay 32-bit), but every tensor gains a scale and a zero point. The gain grows with the model: in a second test, 4,353 parameters gave an int8 file 2.4 times smaller, and 66,561 parameters 3.6 times. Here the loss of accuracy does not matter. For larger models it needs care, as the lesson on [model quantization](/education/edge-ai-tinyml/model-quantization-optimization-mcu/) shows.
 
 ## Exercises
 
@@ -545,7 +558,7 @@ The int8 model is smaller and faster, and its error is a little higher. The file
 <InArticleAd />
 
 
-The pattern is complete: train on the PC, quantize, convert to C, run on the MCU. Next you use Edge Impulse to collect real accelerometer data and train a motion classifier for the ESP32.
+Train on the PC, quantize, convert to C, run on the MCU. Next you use Edge Impulse to collect real accelerometer data and train a motion classifier for the ESP32.
 
 <EdgeAiTinymlComments />
 

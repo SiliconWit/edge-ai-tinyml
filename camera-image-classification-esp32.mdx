@@ -61,8 +61,8 @@ An ESP32-CAM module (AI-Thinker variant with OV2640 camera and 4 MB PSRAM) that 
 | PSRAM | 4 MB |
 | Internal SRAM | ~520 KB |
 | Input resolution | 96 x 96 grayscale |
-| Model (person detection) | Custom CNN, 8,770 parameters, under 30 KB quantized (estimate) |
-| Model (object classification) | MobileNetV1 0.25, about 250 KB quantized (estimate) |
+| Model (person detection) | Custom CNN, 8,770 parameters, about 16 KB quantized |
+| Model (object classification) | MobileNetV1 0.25, about 320 KB quantized |
 | Inference rate | About 1 to 5 FPS (estimate, model dependent) |
 | Output | Serial (class + confidence), onboard LED flash |
 
@@ -114,7 +114,7 @@ The table shows what each model of this lesson needs. The arena and time figures
 
 | Resource | ESP32-CAM Available | Person Detection Model | MobileNetV1 0.25 |
 |----------|-------------------|----------------------|-------------------|
-| Flash (model storage) | 4 MB | ~30 KB | ~250 KB |
+| Flash (model storage) | 4 MB | ~16 KB | ~320 KB |
 | Tensor arena | ~200 KB internal, or 4 MB PSRAM | ~100 KB | ~180 KB |
 | Image buffer (in PSRAM) | 4 MB | 9 KB (96x96x1) | 9 KB (96x96x1) |
 | Inference time | N/A | ~200 ms | ~800 ms |
@@ -217,9 +217,10 @@ static esp_err_t camera_init(void)
         .pixel_format  = PIXFORMAT_GRAYSCALE,
         .frame_size    = FRAMESIZE_96X96,
         .jpeg_quality  = 12,
-        .fb_count      = 1,
+        .fb_count      = 2,    /* two buffers allow GRAB_LATEST */
         .fb_location   = CAMERA_FB_IN_PSRAM,
-        .grab_mode     = CAMERA_GRAB_WHEN_EMPTY,
+        .grab_mode     = CAMERA_GRAB_LATEST,  /* a fresh frame, not one
+                                                 taken before inference */
     };
 
     esp_err_t err = esp_camera_init(&config);
@@ -250,7 +251,7 @@ Key configuration choices:
 <InArticleAd />
 
 
-The camera gives each pixel as a number from 0 to 255. The quantized model expects numbers from -128 to 127, so the firmware subtracts 128 from every pixel. A model must always receive its input on the scale it was trained and converted with.
+The camera gives each pixel as a number from 0 to 255. Training divided each pixel by 255, and the converter then chose an input scale of 1/255 and a zero point of -128 (checked for the person model), so the int8 input is the pixel minus 128. The complete firmware computes it from the scale and zero point the model carries, so it stays right if a converter chooses other values. A model must always receive its input on the scale it was trained and converted with.
 
 ```c
 /* Preprocess a grayscale frame buffer for model input.
@@ -643,7 +644,7 @@ print(f"Quantized model accuracy: {correct / total:.4f} ({correct}/{total})")
 
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
-#include "tensorflow/lite/schema/schema_generated.h"
+#include "tensorflow/lite/micro/schema/schema_generated.h"  /* esp-tflite-micro 1.4.2+ */
 #include "person_detect_model.h"
 
 static const char *TAG = "cam_classify";
@@ -704,9 +705,10 @@ static esp_err_t camera_init(void)
         .pixel_format  = PIXFORMAT_GRAYSCALE,
         .frame_size    = FRAMESIZE_96X96,
         .jpeg_quality  = 12,
-        .fb_count      = 1,
+        .fb_count      = 2,    /* two buffers allow GRAB_LATEST */
         .fb_location   = CAMERA_FB_IN_PSRAM,
-        .grab_mode     = CAMERA_GRAB_WHEN_EMPTY,
+        .grab_mode     = CAMERA_GRAB_LATEST,  /* a fresh frame, not one
+                                                 taken before inference */
     };
 
     esp_err_t err = esp_camera_init(&config);
@@ -828,10 +830,15 @@ static void classification_task(void *arg)
             continue;
         }
 
-        /* Preprocess: uint8 [0,255] to int8 [-128,127] */
+        /* Preprocess: uint8 [0,255] to int8 with the model's own scale.
+           Training divided by 255; with scale 1/255 and zero point -128
+           (printed at start) this is pixel - 128 */
         int8_t *input_data = input->data.int8;
+        float in_scale = input->params.scale;
+        int in_zp = input->params.zero_point;
         for (size_t i = 0; i < fb->len; i++) {
-            input_data[i] = (int8_t)(fb->buf[i] - 128);
+            int32_t q = (int32_t)lroundf(fb->buf[i] / 255.0f / in_scale) + in_zp;
+            input_data[i] = (int8_t)(q < -128 ? -128 : (q > 127 ? 127 : q));
         }
 
         esp_camera_fb_return(fb);
@@ -928,8 +935,8 @@ idf_component_register(SRCS "main.cc"
 ```yaml
 # main/idf_component.yml
 dependencies:
-  espressif/esp32-camera: "~2.0.0"
-  espressif/esp-tflite-micro: "~1.3.1"
+  espressif/esp32-camera: "^2.1.0"
+  espressif/esp-tflite-micro: "^1.4.2"   # 1.4.2 moved schema_generated.h
 ```
 
 ### sdkconfig Defaults
@@ -975,6 +982,16 @@ CONFIG_CAMERA_TASK_STACK_SIZE=4096
 4. The onboard flash LED blinks briefly each time a person is detected with confidence above 0.7.
 </Steps>
 
+### Check it
+
+The validation accuracy was measured on someone else's photographs. Measure your own camera, in its own place and light:
+
+1. **Misses.** With a person who has agreed, take 20 frames at 2 m and 20 at 4 m. Count the frames called "no_person".
+2. **False alarms.** Take 40 frames of the empty scene, with the lamp on and off. Count the frames called "person".
+3. **Fresh frames.** Step into view and count the lines until the answer changes: with `CAMERA_GRAB_LATEST` it should change on the next frame, not one frame late.
+
+Write the two rates down with the light and the distance. A detector that misses half the frames at 4 m is fine for a door at 2 m and wrong for a hall.
+
 ## Object Classification Demo
 
 <InArticleAd />
@@ -995,7 +1012,7 @@ static const char *CLASS_LABELS[] = {
 #define TENSOR_ARENA_SIZE  (300 * 1024)
 ```
 
-The MobileNetV1 0.25 model is larger (about 250 KB) and slower (about 800 ms for each frame, estimated). With transfer learning from ImageNet it can separate 5 to 10 kinds of object. Expect an accuracy near 85% on images like your training set, and less when the light or the background changes.
+The MobileNetV1 0.25 model is larger (about 320 KB) and slower (about 800 ms for each frame, estimated). With transfer learning from ImageNet it can separate 5 to 10 kinds of object. Expect an accuracy near 85% on images like your training set, and less when the light or the background changes.
 
 ## Memory Optimization Techniques
 
@@ -1054,13 +1071,13 @@ If the model barely fits, try these techniques:
 <InArticleAd />
 
 
-These figures are estimates from the parameter counts and typical ESP32 speeds. They were not measured for this lesson, and the accuracies are typical of such models on their validation images. Your firmware prints the real inference time, so use your own numbers.
+The sizes were measured on a PC (TensorFlow 2.21: 15,856 and 326,624 bytes). The other figures are estimates from typical ESP32 speeds, not measured for this lesson, and the accuracies are typical of such models on their validation images. Your firmware prints the real inference time, so use your own numbers.
 
 | Model | Size (int8) | Arena | Inference | FPS | Accuracy |
 |-------|-------------|-------|-----------|-----|----------|
-| Person CNN | ~30 KB | ~100 KB | ~200 ms | ~5 | ~89% |
-| MobileNetV1 0.25 (5 class) | ~250 KB | ~180 KB | ~800 ms | ~1.2 | ~86% |
-| MobileNetV1 0.25 (person) | ~250 KB | ~180 KB | ~800 ms | ~1.2 | ~92% |
+| Person CNN | ~16 KB | ~100 KB | ~200 ms | ~5 | ~89% |
+| MobileNetV1 0.25 (5 class) | ~320 KB | ~180 KB | ~800 ms | ~1.2 | ~86% |
+| MobileNetV1 0.25 (person) | ~320 KB | ~180 KB | ~800 ms | ~1.2 | ~92% |
 
 Notes:
 
@@ -1129,7 +1146,7 @@ A camera is a sensor too, and on a machine it reads what no other sensor can: an
 <InArticleAd />
 
 
-You ran image classification on the ESP32-CAM with its OV2640 camera and 4 MB of PSRAM. The 4-layer CNN for person detection has 8,770 parameters. Expect a quantized file under 30 KB, about 5 frames per second and an accuracy near 89%. The MobileNetV1 0.25 model is about 250 KB and should give about 1.2 frames per second. All of these are estimates, so measure your own build.
+You ran image classification on the ESP32-CAM with its OV2640 camera and 4 MB of PSRAM. The 4-layer CNN for person detection has 8,770 parameters. Its quantized file is about 16 KB (measured on a PC); expect about 5 frames per second and an accuracy near 89%. The MobileNetV1 0.25 model is about 320 KB and should give about 1.2 frames per second. The speeds and accuracies are estimates, so measure your own build.
 
 Memory decided the design. The feature maps of the first layer, not the weights, set the size of the tensor arena, and the frame buffer and the arena live in PSRAM so that internal SRAM stays free for the interpreter and the task stacks. The camera delivers 96x96 grayscale directly, so the only preprocessing is to subtract 128 from each pixel. And because the camera sees people: ask first, keep the images on the device, and send out only the result.
 

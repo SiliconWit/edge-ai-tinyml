@@ -38,7 +38,7 @@ An ESP32 runs the autoencoder from [Anomaly Detection for Predictive Maintenance
 | Parameter | Value |
 |-----------|-------|
 | Edge MCU | ESP32 DevKitC |
-| Edge model | Autoencoder from the anomaly detector, about 43 KB int8 TFLite (estimate) |
+| Edge model | Autoencoder from the anomaly detector, about 54 KB int8 TFLite (55,640 bytes measured) |
 | Cloud model | Larger autoencoder, about 200 KB float32 TensorFlow (estimate) |
 | Cloud server | Python FastAPI on a Linux host (PC, RPi 4, or VPS) |
 | Escalation trigger | MSE in ambiguous zone between `low_threshold` and `high_threshold` |
@@ -61,7 +61,7 @@ The flow of one window of vibration through the system:
 
 ```mermaid
 flowchart TD
-    A[Sensor Data] --> B[Edge Model\n43 KB on ESP32]
+    A[Sensor Data] --> B[Edge Model\n54 KB on ESP32]
     B --> C{MSE threshold?}
     C -- MSE below low --> D[NORMAL\nlocal decision]
     C -- MSE above high --> E[ANOMALY\nlocal decision]
@@ -125,7 +125,7 @@ A single threshold forces a yes or no even when the error is almost on the line,
 | Ambiguous | `low_threshold` to `high_threshold` | Uncertain (escalate) | Cloud |
 | Anomaly | MSE > `high_threshold` | Anomaly (high confidence) | Edge |
 
-You derive `low_threshold` and `high_threshold` from the training data distribution. If the mean training MSE is `mu` and the standard deviation is `sigma`, a reasonable starting point is:
+You derive `low_threshold` and `high_threshold` from the errors of healthy windows the model never saw: the quiet baseline of the anomaly detector, not its training windows (their errors are too small, as that lesson measured). If their mean MSE is `mu` and their standard deviation is `sigma`, a reasonable starting point is:
 
 - `low_threshold = mu + 2.0 * sigma`
 - `high_threshold = mu + 4.0 * sigma`
@@ -277,10 +277,10 @@ logger = logging.getLogger("cloud_server")
 app = FastAPI(title="Edge-Cloud Hybrid Inference Server")
 
 # Configuration
-CLOUD_MODEL_PATH = "models/cloud_autoencoder"
+CLOUD_MODEL_PATH = "models/cloud_autoencoder.keras"  # Keras 3 loads .keras or .h5 files only
 EDGE_MODEL_DIR = "models/edge"
 ESCALATION_LOG = "data/escalations.jsonl"
-ANOMALY_THRESHOLD = 0.025  # Cloud model threshold (tighter than edge)
+ANOMALY_THRESHOLD = 0.025  # The cloud model's own threshold: its errors have their own scale
 INPUT_SIZE = 300
 
 # Load cloud model
@@ -552,7 +552,7 @@ factory,    app,  factory, 0x10000,  0x1E0000,
 model,      data, fat,     0x1F0000, 0x10000,
 ```
 
-The `model` partition is 64 KB, which is enough for the quantized autoencoder (about 43 KB, an estimate) plus its 16-byte header, with some room to grow. Set the partition table in `sdkconfig`:
+The `model` partition is 64 KB. The quantized autoencoder (55,640 bytes) and its 16-byte header leave 9,880 bytes free, so a wider model needs a larger partition (0x20000 here still ends inside 4 MB of flash). Set the partition table in `sdkconfig`:
 
 ```
 CONFIG_PARTITION_TABLE_CUSTOM=y
@@ -705,6 +705,35 @@ uint32_t model_storage_get_version(void)
 
     return header.version;
 }
+
+// The stored model, read in place from flash (memory-mapped), checked
+// against its CRC. Mapped once; after a new write the same address
+// shows the new bytes. Returns NULL if there is no valid model.
+const uint8_t *model_storage_map(size_t *model_size)
+{
+    static const void *s_ptr = NULL;
+    static esp_partition_mmap_handle_t s_handle;
+    const esp_partition_t *part = get_model_partition();
+    model_header_t header;
+
+    if (part == NULL
+        || esp_partition_read(part, 0, &header, sizeof(header)) != ESP_OK
+        || header.magic != MODEL_MAGIC
+        || sizeof(header) + header.model_size > part->size) {
+        return NULL;
+    }
+    if (s_ptr == NULL
+        && esp_partition_mmap(part, 0, part->size, ESP_PARTITION_MMAP_DATA,
+                              &s_ptr, &s_handle) != ESP_OK) {
+        return NULL;
+    }
+    const uint8_t *model = (const uint8_t *)s_ptr + sizeof(header);
+    if (compute_checksum(model, header.model_size) != header.checksum) {
+        return NULL;
+    }
+    *model_size = header.model_size;
+    return model;
+}
 ```
 
 ### OTA Download and Update on ESP32
@@ -725,8 +754,15 @@ static const char *TAG = "OTA_MODEL";
 #define DOWNLOAD_URL "http://192.168.1.100:8000/model/download"
 #define MAX_MODEL_SIZE (64 * 1024)
 
-// Callback reference for interpreter reload
+// Interpreter reload (interpreter_reload.cc) and the lock it shares with
+// the inference task
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 extern void reload_tflite_interpreter(const uint8_t *model_data, size_t model_size);
+extern SemaphoreHandle_t g_model_mutex;
+extern const unsigned char g_default_model[];
+extern const unsigned int g_default_model_len;
 
 static uint8_t download_buffer[MAX_MODEL_SIZE];
 
@@ -837,16 +873,23 @@ void ota_model_update_task(void *pvParameters)
             continue;
         }
 
+        // Pause inference: the write erases the flash that the running
+        // interpreter reads its model from
+        xSemaphoreTake(g_model_mutex, portMAX_DELAY);
         err = model_storage_write(download_buffer, model_size, (uint32_t)remote_version);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Flash write failed: %s", esp_err_to_name(err));
-            continue;
+        const uint8_t *stored = NULL;
+        if (err == ESP_OK) {
+            stored = model_storage_map(&model_size);   // read in place, CRC checked
         }
-
-        // Reload the interpreter with the new model
-        reload_tflite_interpreter(download_buffer, model_size);
-
-        ESP_LOGI(TAG, "Model updated to v%d, interpreter reloaded", remote_version);
+        if (stored != NULL) {
+            reload_tflite_interpreter(stored, model_size);
+            ESP_LOGI(TAG, "Model updated to v%d, interpreter reloaded", remote_version);
+        } else {
+            // Never run on download_buffer: the next download overwrites it
+            ESP_LOGE(TAG, "Flash write failed, back to the built-in model");
+            reload_tflite_interpreter(g_default_model, g_default_model_len);
+        }
+        xSemaphoreGive(g_model_mutex);
     }
 }
 ```
@@ -863,7 +906,9 @@ When a new model is written to flash, the interpreter must be reinitialized. The
 #include <new>
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
-#include "tensorflow/lite/schema/schema_generated.h"
+#include "tensorflow/lite/micro/schema/schema_generated.h"  // older TFLM: tensorflow/lite/schema/
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const int kTensorArenaSize = 32 * 1024;
 alignas(16) static uint8_t tensor_arena[kTensorArenaSize];
@@ -876,10 +921,16 @@ static tflite::MicroMutableOpResolver<4> resolver;
 static bool resolver_initialized = false;
 
 // Fallback: compiled-in model for first boot
-extern const unsigned char g_default_model[];
-extern const unsigned int g_default_model_len;
+extern "C" const unsigned char g_default_model[];
+extern "C" const unsigned int g_default_model_len;
 
-// extern "C": this function is called from ota_model_update.c (a C file)
+// Taken by the inference task around Invoke() (check interpreter != nullptr
+// there) and by the OTA task around write and reload. Create it at start:
+// g_model_mutex = xSemaphoreCreateMutex();
+extern "C" { SemaphoreHandle_t g_model_mutex = NULL; }
+
+// extern "C": this function is called from ota_model_update.c (a C file).
+// Call it with g_model_mutex held.
 extern "C" void reload_tflite_interpreter(const uint8_t *model_data,
                                           size_t model_size)
 {
@@ -912,6 +963,10 @@ extern "C" void reload_tflite_interpreter(const uint8_t *model_data,
         printf("AllocateTensors failed for new model\n");
         interpreter->~MicroInterpreter();
         interpreter = nullptr;
+        if (model_data != g_default_model) {
+            // Keep the device working on the model it was built with
+            reload_tflite_interpreter(g_default_model, g_default_model_len);
+        }
         return;
     }
 
@@ -920,7 +975,7 @@ extern "C" void reload_tflite_interpreter(const uint8_t *model_data,
 }
 ```
 
-On first boot, if no model is found in the flash partition, the firmware falls back to the compiled-in default model. After the first OTA update, subsequent boots load from flash.
+On first boot, if no model is found in the flash partition, the firmware falls back to the compiled-in default model. After the first OTA update, subsequent boots load from flash. The interpreter reads the model where it lies: in the flash partition through `model_storage_map()`, never in `download_buffer`, which the next download overwrites. Because writing a new model erases that flash, the OTA task holds `g_model_mutex` from the write to the end of the reload, and the inference task takes the same mutex around each `Invoke()`.
 
 ## Cloud Retraining Pipeline
 
@@ -1037,8 +1092,9 @@ def main():
     )
 
     # Compute new thresholds
-    reconstructions = model.predict(training_data, verbose=0)
-    mse_values = np.mean((training_data - reconstructions) ** 2, axis=1)
+    # Thresholds from the validation windows, which the model did not fit
+    reconstructions = model.predict(val_set, verbose=0)
+    mse_values = np.mean((val_set - reconstructions) ** 2, axis=1)
     mu = np.mean(mse_values)
     sigma = np.std(mse_values)
     print(f"New threshold stats: mu={mu:.6f}, sigma={sigma:.6f}")
@@ -1087,6 +1143,8 @@ if __name__ == "__main__":
 
 After this script runs, the new `model.tflite` is available at the `/model/download` endpoint, and every ESP32 fetches it at its next check. Note what the script trusts: it adds each escalated window that the cloud model called normal to the training data, with no person in between. Look at those windows before you let the version number rise.
 
+A new model also brings a new scale of errors, so the device's two thresholds belong to the model. The script prints the new ones, but the ESP32 keeps its old ones until you send them too (Exercise 2). After every update, watch the share of windows that the device escalates: a jump from about 5% to 30%, or to 0%, means the thresholds no longer fit the model.
+
 ### Retraining Workflow
 
 <Steps>
@@ -1096,6 +1154,14 @@ After this script runs, the new `model.tflite` is available at the `/model/downl
 4. After training, it quantizes the model to int8 and increments the version number
 5. ESP32 devices detect the new version on their next check cycle (every 30 minutes) and download the update automatically
 </Steps>
+
+### Check it
+
+Test the failures, not only the normal path:
+
+1. **Escalation share.** Count escalations against windows over one hour of healthy running. Near 5% matches the design; far above it usually means thresholds taken from training errors, not a baseline.
+2. **Server gone.** Stop the server. The device must keep deciding, log its fallback after at most 5 seconds per unsure window, and return to escalating when the server is back.
+3. **Update and power cut.** Raise the version on the server and see the new version on the status topic. Then cut the power during a download, and once during the flash write: the device must start again on the old model or the built-in one, never on none.
 
 ## MQTT Dashboard Integration
 
@@ -1289,7 +1355,7 @@ void publish_ota_event(uint32_t old_version, uint32_t new_version,
 }
 ```
 
-If you completed the [IoT Systems course](/education/iot-systems/), you can point Grafana at these MQTT topics (via an InfluxDB or TimescaleDB bridge) to visualize inference rates, escalation frequency, model version transitions, and device health over time. The SiliconWit.io dashboard also supports direct MQTT subscription for real-time monitoring.
+If you completed the [IoT Systems course](/education/iot-systems/), you can point Grafana at these MQTT topics (via an InfluxDB or TimescaleDB bridge) to visualize inference rates, escalation frequency, model version transitions, and device health over time. To send the same results to SiliconWit.io, the device publishes to its MQTT broker over TLS with its own device token, on the topic `d/<device id>/t` (mqtt.siliconwit.io lists the endpoints); the topic tree of this lesson is for your own broker.
 
 ## Federated Learning Concepts
 
@@ -1334,7 +1400,7 @@ For MCU-based systems, feature summary approaches are often more practical. Comp
 
 Privacy matters even in industrial settings. A factory's vibration patterns can reveal production schedules, equipment utilization rates, and maintenance practices. Federated learning prevents this data from leaving the facility while still allowing cross-facility model improvement.
 
-The bandwidth saving grows with the fleet. Uploading 300 floats (1.2 KB as 4-byte numbers, and several times more as the JSON text this lesson sends) per escalation from 50 devices, with 10 escalations per hour, produces 14.4 MB of raw data per day. A federated round that shares only weight deltas (about 43 KB per device, once per day) produces about 2.2 MB in total ($43\,\text{KB} \times 50 = 2150\,\text{KB}$).
+The bandwidth saving grows with the fleet. The inference loop of this lesson takes about one window a second, so 5% escalations are about 180 an hour. Uploading 300 floats (1.2 KB as 4-byte numbers, and several times more as the JSON text this lesson sends) per escalation from 50 devices then produces about 259 MB of raw data per day ($1.2\,\text{KB} \times 180 \times 24 \times 50$). A federated round that shares only weight deltas (about 54 KB per device, once per day) produces about 2.7 MB in total ($54\,\text{KB} \times 50 = 2700\,\text{KB}$).
 
 ### Current State on MCUs
 
