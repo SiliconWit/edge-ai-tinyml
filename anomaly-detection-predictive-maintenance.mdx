@@ -71,7 +71,7 @@ This is predictive maintenance in miniature, and it works only because the senso
 | Model | Autoencoder (encoder: 300 to 64 to 16; decoder: 16 to 64 to 300) |
 | Model size | About 54 KB quantized (55,640 bytes with TensorFlow 2.21) |
 | Anomaly metric | Mean squared reconstruction error |
-| Alert threshold | Mean + 3 sigma of the errors on the training data |
+| Alert threshold | Mean + 3 sigma of the errors on a quiet baseline (healthy windows the model never saw) |
 | Output | LED (GPIO 2), MQTT alert on `device/anomaly/alert` |
 
 ### Bill of Materials
